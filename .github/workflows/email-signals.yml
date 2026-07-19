@@ -1,46 +1,56 @@
-name: Send Trading Signal Email
+name: Send Daily and Weekly Signal Email
+
 on:
   schedule:
+    # 8 PM Eastern during daylight-saving time
     - cron: "0 0 * * *"
+
+    # 8 PM Eastern during standard time
     - cron: "0 1 * * *"
+
   workflow_dispatch:
-    inputs:
-      report:
-        description: Report type
-        required: true
-        default: both
-        type: choice
-        options: [daily, weekly, both]
+
 permissions:
   contents: read
+
 jobs:
-  email:
+  send-email:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-      - run: pip install -r requirements.txt
-      - name: Scheduled report
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Send scheduled email
         if: github.event_name == 'schedule'
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_USE_SSL: ${{ secrets.SMTP_USE_SSL }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
-        run: python email_report.py --report auto
-      - name: Manual report
+        run: python email_report.py
+
+      - name: Send manual test email
         if: github.event_name == 'workflow_dispatch'
         env:
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_USE_SSL: ${{ secrets.SMTP_USE_SSL }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
-        run: python email_report.py --report "${{ inputs.report }}" --force
+        run: python email_report.py --force
