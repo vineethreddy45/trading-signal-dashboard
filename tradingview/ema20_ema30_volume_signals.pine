@@ -1,0 +1,18 @@
+//@version=6
+indicator("EMA20 EMA30 Volume Signals", overlay=true)
+signalTimeframe=input.string("Weekly","Signal timeframe",options=["Daily","Weekly"])
+tf=signalTimeframe=="Weekly"?"W":"D"
+ema20=request.security(syminfo.tickerid,tf,ta.ema(close,20))
+ema30=request.security(syminfo.tickerid,tf,ta.ema(close,30))
+closeTf=request.security(syminfo.tickerid,tf,close)
+lowTf=request.security(syminfo.tickerid,tf,low)
+priorHigh=request.security(syminfo.tickerid,tf,high[1])
+vol=request.security(syminfo.tickerid,tf,volume)
+volAvg=request.security(syminfo.tickerid,tf,ta.sma(volume,20))
+breakout=closeTf>ema20 and closeTf>ema30 and ema20>ema30 and vol>volAvg and closeTf>priorHigh
+pullback=closeTf>ema30 and ema20>ema30 and lowTf<=ema20 and closeTf>ema20 and vol>volAvg
+plot(ema20,"EMA20"); plot(ema30,"EMA30")
+plotshape(breakout,style=shape.triangleup,location=location.belowbar,text="B")
+plotshape(pullback,style=shape.circle,location=location.belowbar,text="P")
+alertcondition(breakout,"Breakout Buy","BREAKOUT BUY {{ticker}} at {{close}}")
+alertcondition(pullback,"Pullback Buy","PULLBACK BUY {{ticker}} at {{close}}")

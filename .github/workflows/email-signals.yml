@@ -1,0 +1,46 @@
+name: Send Trading Signal Email
+on:
+  schedule:
+    - cron: "0 0 * * *"
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+    inputs:
+      report:
+        description: Report type
+        required: true
+        default: both
+        type: choice
+        options: [daily, weekly, both]
+permissions:
+  contents: read
+jobs:
+  email:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Scheduled report
+        if: github.event_name == 'schedule'
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: python email_report.py --report auto
+      - name: Manual report
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: python email_report.py --report "${{ inputs.report }}" --force
