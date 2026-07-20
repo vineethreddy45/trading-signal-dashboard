@@ -17,8 +17,13 @@ def load_history(symbol, period): return download_history(symbol, period)
 
 symbols = load_symbols()
 with st.sidebar:
-    market = st.selectbox("Market", ["India", "US"])
-    market_df = symbols[symbols.market == market]
+    MARKET_LABELS = {"India": "India", "US": "USA"}
+    market = st.selectbox("Market", list(MARKET_LABELS.keys()))
+    market_value = MARKET_LABELS[market]
+    market_df = symbols[symbols.market == market_value]
+    if market_df.empty:
+        st.error(f"No symbols found for market: {market}")
+        st.stop()
     display = st.selectbox("Symbol", market_df.display_symbol.tolist())
     symbol = market_df.loc[market_df.display_symbol == display, "symbol"].iloc[0]
     timeframe = st.radio("Timeframe", ["Daily", "Weekly"], horizontal=True)
