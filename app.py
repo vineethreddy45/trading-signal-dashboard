@@ -102,7 +102,7 @@ with t4:
     scan_tf = st.radio("Scanner Timeframe",["Daily","Weekly"],horizontal=True)
     allowed = st.multiselect("Signals",["BREAKOUT BUY","PULLBACK BUY","WATCH","NEUTRAL","AVOID"],default=["BREAKOUT BUY","PULLBACK BUY","WATCH"])
     f1,f2,f3,f4=st.columns(4)
-    rv=f1.checkbox("Require volume"); e20=f2.checkbox("Require close > EMA20"); e30=f3.checkbox("Require close > EMA30"); stack=f4.checkbox("Require EMA20 > EMA30")
+    rv=f1.checkbox("Require volume", value=True); e20=f2.checkbox("Require close > EMA20"); e30=f3.checkbox("Require close > EMA30"); stack=f4.checkbox("Require EMA20 > EMA30")
     # Use the same mapping as the sidebar so UI labels ("US") map to CSV values ("USA")
     scan_market_value = MARKET_LABELS.get(scan_market, scan_market)
     sdf = symbols[symbols.market == scan_market_value]
