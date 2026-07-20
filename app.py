@@ -21,11 +21,22 @@ with st.sidebar:
     market = st.selectbox("Market", list(MARKET_LABELS.keys()))
     market_value = MARKET_LABELS[market]
     market_df = symbols[symbols.market == market_value]
-    if market_df.empty:
-        st.error(f"No symbols found for market: {market}")
+
+    search_query = st.text_input("Search symbol", value="")
+    if search_query:
+        filtered_df = market_df[
+            market_df["display_symbol"].str.contains(search_query, case=False, na=False)
+            | market_df["symbol"].str.contains(search_query, case=False, na=False)
+        ]
+    else:
+        filtered_df = market_df
+
+    if filtered_df.empty:
+        st.warning("No matching symbol found. Try a different search term.")
         st.stop()
-    display = st.selectbox("Symbol", market_df.display_symbol.tolist())
-    symbol = market_df.loc[market_df.display_symbol == display, "symbol"].iloc[0]
+
+    display = st.selectbox("Symbol", filtered_df.display_symbol.tolist())
+    symbol = filtered_df.loc[filtered_df.display_symbol == display, "symbol"].iloc[0]
     timeframe = st.radio("Timeframe", ["Daily", "Weekly"], horizontal=True)
     period = st.selectbox("History", ["2y", "5y", "10y", "max"], index=1)
     capital = st.number_input("Capital", min_value=1000.0, value=1_000_000.0 if market=="India" else 10_000.0, step=1000.0)
