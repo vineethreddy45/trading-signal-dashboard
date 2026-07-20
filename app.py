@@ -101,6 +101,8 @@ with t4:
     scan_market = st.selectbox("Scanner Market",["India","US"],key="sm")
     scan_tf = st.radio("Scanner Timeframe",["Daily","Weekly"],horizontal=True)
     allowed = st.multiselect("Signals",["BREAKOUT BUY","PULLBACK BUY","WATCH","NEUTRAL","AVOID"],default=["BREAKOUT BUY","PULLBACK BUY","WATCH"])
+    if not allowed:
+        st.warning("Please select at least one signal type to scan.")
     f1,f2,f3,f4=st.columns(4)
     rv=f1.checkbox("Require volume", value=True); e20=f2.checkbox("Require close > EMA20"); e30=f3.checkbox("Require close > EMA30"); stack=f4.checkbox("Require EMA20 > EMA30")
     # Use the same mapping as the sidebar so UI labels ("US") map to CSV values ("USA")
@@ -115,18 +117,23 @@ with t4:
         count = st.slider("Number of symbols", min_count, max_count, value=default_count)
         filtered = pd.DataFrame()
         if st.button("Run Scanner"):
-            with st.spinner("Scanning..."):
-                result = scan_symbols(sdf, scan_tf, count)
-                filtered = result[result.Signal.isin(allowed)].copy()
-                if rv:
-                    filtered = filtered[filtered["Volume Confirm"] == True]
-                if e20:
-                    filtered = filtered[filtered["Close > EMA20"] == True]
-                if e30:
-                    filtered = filtered[filtered["Close > EMA30"] == True]
-                if stack:
-                    filtered = filtered[filtered["EMA20 > EMA30"] == True]
-        if not filtered.empty:
-            st.dataframe(filtered, hide_index=True, use_container_width=True)
-            st.download_button("Download CSV", filtered.to_csv(index=False).encode(), file_name=f"{scan_market}_{scan_tf}_signals.csv")
+            if not allowed:
+                st.warning("Please select at least one signal type to scan.")
+            else:
+                with st.spinner("Scanning..."):
+                    result = scan_symbols(sdf, scan_tf, count)
+                    filtered = result[result.Signal.isin(allowed)].copy()
+                    if rv:
+                        filtered = filtered[filtered["Volume Confirm"] == True]
+                    if e20:
+                        filtered = filtered[filtered["Close > EMA20"] == True]
+                    if e30:
+                        filtered = filtered[filtered["Close > EMA30"] == True]
+                    if stack:
+                        filtered = filtered[filtered["EMA20 > EMA30"] == True]
+                    if filtered.empty:
+                        st.info("No symbols matched the selected filters. Try fewer restrictions.")
+                    else:
+                        st.dataframe(filtered, hide_index=True, use_container_width=True)
+                        st.download_button("Download CSV", filtered.to_csv(index=False).encode(), file_name=f"{scan_market}_{scan_tf}_signals.csv")
 st.caption("Educational research tool only. Data may be delayed.")
