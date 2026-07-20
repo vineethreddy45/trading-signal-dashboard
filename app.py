@@ -15,31 +15,10 @@ def load_symbols(): return pd.read_csv(Path("data/symbols.csv"))
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_history(symbol, period): return download_history(symbol, period)
 
-def get_stock_chat_response(question, symbol, signal, quote_time, metrics, market, timeframe, period):
-    q = question.strip().lower()
-    if not q:
-        return "Please ask a stock-related question, for example: 'What is the latest signal?'"
-    if "help" in q or "what can" in q:
-        return "Ask about the latest signal, trend, price quote, volume confirmation, backtest results, win rate, or max drawdown."
-    if "latest signal" in q or q == "signal" or "signal" in q:
-        return f"The latest signal for {symbol} is {signal['signal']}."
-    if "ema20" in q or "ema30" in q or "trend" in q:
-        direction = "bullish" if signal['ema20'] > signal['ema30'] else "bearish"
-        return f"EMA20 is {'above' if signal['ema20'] > signal['ema30'] else 'below'} EMA30, which indicates a {direction} trend."
-    if "volume" in q:
-        return "Volume is confirming the move." if signal['volume_confirm'] else "Volume is not confirming the move right now."
-    if "price" in q or "quote" in q or "latest price" in q:
-        return f"The latest quote time is {quote_time}." if quote_time else "Price quote is unavailable at the moment."
-    if "backtest" in q or "trades" in q or "win rate" in q or "return" in q or "drawdown" in q:
-        return (f"Backtest summary for {symbol}: {metrics['trades']} trades, win rate {metrics['win_rate']:.1f}%, "
-                f"return {metrics['return_pct']:.1f}%, net profit {metrics['net_profit']:.2f}, "
-                f"max drawdown {metrics['max_drawdown_pct']:.1f}%.")
-    return "I can answer questions about signal, trend, price, volume, and backtest metrics."
-
 symbols = load_symbols()
 with st.sidebar:
-    MARKET_LABELS = {"US": "USA", "India": "India"}
-    market = st.selectbox("Market", list(MARKET_LABELS.keys()), index=0)
+    MARKET_LABELS = {"India": "India", "US": "USA"}
+    market = st.selectbox("Market", list(MARKET_LABELS.keys()), index=1)
     market_value = MARKET_LABELS[market]
     market_df = symbols[symbols.market == market_value]
 
@@ -64,11 +43,6 @@ with st.sidebar:
     risk_pct = st.slider("Risk per trade (%)", 0.25, 2.0, 1.0, 0.25)
     target_r = st.slider("Target R", 1.0, 5.0, 2.0, 0.5)
     stop_lookback = st.slider("Stop lookback", 1, 10, 2 if timeframe=="Weekly" else 5)
-
-if "chat_question" not in st.session_state:
-    st.session_state.chat_question = ""
-if "chat_response" not in st.session_state:
-    st.session_state.chat_response = ""
 
 cfg = StrategyConfig(timeframe=timeframe, capital=capital, risk_pct=risk_pct, target_r=target_r, stop_lookback=stop_lookback)
 try:
@@ -127,23 +101,4 @@ with t4:
         if stack: filtered=filtered[filtered["EMA20 > EMA30"]==True]
         st.dataframe(filtered,hide_index=True,use_container_width=True)
         st.download_button("Download CSV",filtered.to_csv(index=False).encode(),file_name=f"{scan_market}_{scan_tf}_signals.csv")
-with t5:
-    st.header("Vineeth Bot")
-    st.write("Ask a stock-related question about the selected symbol.")
-    st.markdown("**Example questions:** What is the latest signal? Is the trend bullish? Is volume confirming the move? What is the backtest win rate?")
-    question = st.text_input("Ask Vineeth Bot", value=st.session_state.chat_question)
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        if st.button("Ask Vineeth Bot"):
-            st.session_state.chat_question = question
-            st.session_state.chat_response = get_stock_chat_response(question, symbol, signal, quote_time, metrics, market, timeframe, period)
-    with col2:
-        if st.button("Reset Vineeth Bot"):
-            st.session_state.chat_question = ""
-            st.session_state.chat_response = ""
-            st.experimental_rerun()
-    if st.session_state.chat_response:
-        st.subheader("Vineeth Bot says:")
-        st.info(st.session_state.chat_response)
-
 st.caption("Educational research tool only. Data may be delayed.")
