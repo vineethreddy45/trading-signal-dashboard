@@ -45,19 +45,26 @@ with st.sidebar:
     stop_lookback = st.slider("Stop lookback", 1, 10, 2 if timeframe=="Weekly" else 5)
 
 cfg = StrategyConfig(timeframe=timeframe, capital=capital, risk_pct=risk_pct, target_r=target_r, stop_lookback=stop_lookback)
-try:
-    daily = load_history(symbol, period)
-    bars = convert_timeframe(daily, timeframe)
-    chart_data = enrich(bars, cfg)
-    signal = latest_signal(bars, cfg)
-    trades, equity, metrics = backtest(bars, cfg)
-except Exception as exc:
-    st.error(str(exc)); st.stop()
-
-t1,t2,t3,t4 = st.tabs(["Current Signal","Chart","Backtest","Signal Scanner"])
-with t1:
-    try: live, quote_time = latest_price(symbol)
-    except Exception: live, quote_time = None, "Unavailable"
+    else:
+        min_count = 5 if max_count >= 5 else 1
+        default_count = min(20, max_count)
+        count = st.slider("Number of symbols", min_count, max_count, value=default_count)
+        filtered = pd.DataFrame()
+        if st.button("Run Scanner"):
+            with st.spinner("Scanning..."):
+                result = scan_symbols(sdf, scan_tf, count)
+                filtered = result[result.Signal.isin(allowed)].copy()
+                if rv:
+                    filtered = filtered[filtered["Volume Confirm"] == True]
+                if e20:
+                    filtered = filtered[filtered["Close > EMA20"] == True]
+                if e30:
+                    filtered = filtered[filtered["Close > EMA30"] == True]
+                if stack:
+                    filtered = filtered[filtered["EMA20 > EMA30"] == True]
+        if not filtered.empty:
+            st.dataframe(filtered, hide_index=True, use_container_width=True)
+            st.download_button("Download CSV", filtered.to_csv(index=False).encode(), file_name=f"{scan_market}_{scan_tf}_signals.csv")
     cols = st.columns(5)
     cols[0].metric("Latest Price", "Unavailable" if live is None else f"{live:,.2f}")
     cols[1].metric("Bar Close", f"{signal['close']:,.2f}")
