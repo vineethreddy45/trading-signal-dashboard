@@ -10,6 +10,9 @@ st.set_page_config(page_title="Trading Signal Dashboard", layout="wide")
 st.title("Trading Signal Dashboard")
 st.caption("Daily and weekly EMA20, EMA30 and volume signals")
 
+# Map UI market names to CSV market values
+MARKET_LABELS = {"India": "India", "US": "USA"}
+
 
 @st.cache_data(ttl=3600)
 def load_symbols():
@@ -23,7 +26,6 @@ def load_history(symbol, period):
 
 symbols = load_symbols()
 with st.sidebar:
-    MARKET_LABELS = {"India": "India", "US": "USA"}
     market = st.selectbox("Market", list(MARKET_LABELS.keys()), index=1)
     market_value = MARKET_LABELS[market]
     market_df = symbols[symbols.market == market_value]
@@ -101,7 +103,9 @@ with t4:
     allowed = st.multiselect("Signals",["BREAKOUT BUY","PULLBACK BUY","WATCH","NEUTRAL","AVOID"],default=["BREAKOUT BUY","PULLBACK BUY","WATCH"])
     f1,f2,f3,f4=st.columns(4)
     rv=f1.checkbox("Require volume"); e20=f2.checkbox("Require close > EMA20"); e30=f3.checkbox("Require close > EMA30"); stack=f4.checkbox("Require EMA20 > EMA30")
-    sdf=symbols[symbols.market==scan_market]
+    # Use the same mapping as the sidebar so UI labels ("US") map to CSV values ("USA")
+    scan_market_value = MARKET_LABELS.get(scan_market, scan_market)
+    sdf = symbols[symbols.market == scan_market_value]
     max_count = len(sdf)
     if max_count == 0:
         st.warning("No symbols available for the selected market.")
