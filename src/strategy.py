@@ -13,6 +13,7 @@ class StrategyConfig:
     risk_pct: float = 1.0
     commission_pct: float = 0.05
     slippage_pct: float = 0.05
+    market: str = "USA"
 
 
 def convert_timeframe(daily: pd.DataFrame, timeframe: str) -> pd.DataFrame:
@@ -37,15 +38,27 @@ def enrich(data: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
     df["VOLUME_CONFIRM"] = df["Volume"] > df["VOL_AVG20"]
     df["PRIOR_HIGH"] = df["High"].shift(1)
     df["STOP"] = df["Low"].rolling(cfg.stop_lookback).min().shift(1)
-    df["BREAKOUT_BUY"] = (
-        df["ABOVE_EMA20"] & df["ABOVE_EMA30"] & df["EMA_STACK"] &
-        df["EMA20_RISING"] & df["EMA30_RISING"] & df["VOLUME_CONFIRM"] &
-        (df["Close"] > df["PRIOR_HIGH"])
-    )
-    df["PULLBACK_BUY"] = (
-        df["ABOVE_EMA30"] & df["EMA_STACK"] & (df["Low"] <= df["EMA20"]) &
-        (df["Close"] > df["EMA20"]) & df["VOLUME_CONFIRM"]
-    )
+    if cfg.market == "USA":
+        df["BREAKOUT_BUY"] = (
+            (df["ABOVE_EMA20"] | df["ABOVE_EMA30"]) & df["EMA_STACK"] &
+            ((df["EMA20_RISING"] & df["EMA30_RISING"]) | df["VOLUME_CONFIRM"]) &
+            (df["Close"] > df["PRIOR_HIGH"])
+        )
+        df["PULLBACK_BUY"] = (
+            (df["ABOVE_EMA30"] | df["ABOVE_EMA20"]) & df["EMA_STACK"] &
+            (df["Low"] <= df["EMA20"]) & (df["Close"] > df["EMA20"]) &
+            (df["VOLUME_CONFIRM"] | df["EMA20_RISING"])
+        )
+    else:
+        df["BREAKOUT_BUY"] = (
+            df["ABOVE_EMA20"] & df["ABOVE_EMA30"] & df["EMA_STACK"] &
+            df["EMA20_RISING"] & df["EMA30_RISING"] & df["VOLUME_CONFIRM"] &
+            (df["Close"] > df["PRIOR_HIGH"])
+        )
+        df["PULLBACK_BUY"] = (
+            df["ABOVE_EMA30"] & df["EMA_STACK"] & (df["Low"] <= df["EMA20"]) &
+            (df["Close"] > df["EMA20"]) & df["VOLUME_CONFIRM"]
+        )
     score = (df["ABOVE_EMA20"].astype(int) + df["ABOVE_EMA30"].astype(int) +
              df["EMA_STACK"].astype(int) + df["EMA20_RISING"].astype(int) +
              df["EMA30_RISING"].astype(int) + df["VOLUME_CONFIRM"].astype(int))

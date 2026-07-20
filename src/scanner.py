@@ -10,9 +10,9 @@ from src.strategy import StrategyConfig, convert_timeframe, latest_signal
 
 def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = None) -> pd.DataFrame:
     rows, source = [], symbols_df.head(limit) if limit else symbols_df
-    cfg = StrategyConfig(timeframe=timeframe)
     for item in source.itertuples(index=False):
         try:
+            cfg = StrategyConfig(timeframe=timeframe, market=item.market)
             daily = download_history(item.symbol, "3y")
             signal = latest_signal(convert_timeframe(daily, timeframe), cfg)
             rows.append({"Symbol": item.display_symbol, "Market": item.market,
