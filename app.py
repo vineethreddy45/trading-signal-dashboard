@@ -91,10 +91,16 @@ with t4:
     f1,f2,f3,f4=st.columns(4)
     rv=f1.checkbox("Require volume"); e20=f2.checkbox("Require close > EMA20"); e30=f3.checkbox("Require close > EMA30"); stack=f4.checkbox("Require EMA20 > EMA30")
     sdf=symbols[symbols.market==scan_market]
-    count=st.slider("Number of symbols",5,len(sdf),min(20,len(sdf)))
-    if st.button("Run Scanner"):
-        with st.spinner("Scanning..."): result=scan_symbols(sdf,scan_tf,count)
-        filtered=result[result.Signal.isin(allowed)].copy()
+    max_count = len(sdf)
+    if max_count == 0:
+        st.warning("No symbols available for the selected market.")
+    else:
+        min_count = 5 if max_count >= 5 else 1
+        default_count = min(20, max_count)
+        count = st.slider("Number of symbols", min_count, max_count, value=default_count)
+        if st.button("Run Scanner"):
+            with st.spinner("Scanning..."): result=scan_symbols(sdf,scan_tf,count)
+            filtered=result[result.Signal.isin(allowed)].copy()
         if rv: filtered=filtered[filtered["Volume Confirm"]==True]
         if e20: filtered=filtered[filtered["Close > EMA20"]==True]
         if e30: filtered=filtered[filtered["Close > EMA30"]==True]
