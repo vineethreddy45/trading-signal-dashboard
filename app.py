@@ -10,15 +10,21 @@ st.set_page_config(page_title="Trading Signal Dashboard", layout="wide")
 st.title("Trading Signal Dashboard")
 st.caption("Daily and weekly EMA20, EMA30 and volume signals")
 
+
 @st.cache_data(ttl=3600)
-def load_symbols(): return pd.read_csv(Path("data/symbols.csv"))
+def load_symbols():
+    return pd.read_csv(Path("data/symbols.csv"))
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_history(symbol, period): return download_history(symbol, period)
+def load_history(symbol, period):
+    return download_history(symbol, period)
+
 
 symbols = load_symbols()
 with st.sidebar:
     MARKET_LABELS = {"India": "India", "US": "USA"}
-    market = st.selectbox("Market", list(MARKET_LABELS.keys()))
+    market = st.selectbox("Market", list(MARKET_LABELS.keys()), index=1)
     market_value = MARKET_LABELS[market]
     market_df = symbols[symbols.market == market_value]
 
@@ -44,27 +50,25 @@ with st.sidebar:
     target_r = st.slider("Target R", 1.0, 5.0, 2.0, 0.5)
     stop_lookback = st.slider("Stop lookback", 1, 10, 2 if timeframe=="Weekly" else 5)
 
+
 cfg = StrategyConfig(timeframe=timeframe, capital=capital, risk_pct=risk_pct, target_r=target_r, stop_lookback=stop_lookback)
-    else:
-        min_count = 5 if max_count >= 5 else 1
-        default_count = min(20, max_count)
-        count = st.slider("Number of symbols", min_count, max_count, value=default_count)
-        filtered = pd.DataFrame()
-        if st.button("Run Scanner"):
-            with st.spinner("Scanning..."):
-                result = scan_symbols(sdf, scan_tf, count)
-                filtered = result[result.Signal.isin(allowed)].copy()
-                if rv:
-                    filtered = filtered[filtered["Volume Confirm"] == True]
-                if e20:
-                    filtered = filtered[filtered["Close > EMA20"] == True]
-                if e30:
-                    filtered = filtered[filtered["Close > EMA30"] == True]
-                if stack:
-                    filtered = filtered[filtered["EMA20 > EMA30"] == True]
-        if not filtered.empty:
-            st.dataframe(filtered, hide_index=True, use_container_width=True)
-            st.download_button("Download CSV", filtered.to_csv(index=False).encode(), file_name=f"{scan_market}_{scan_tf}_signals.csv")
+try:
+    daily = load_history(symbol, period)
+    bars = convert_timeframe(daily, timeframe)
+    chart_data = enrich(bars, cfg)
+    signal = latest_signal(bars, cfg)
+    trades, equity, metrics = backtest(bars, cfg)
+except Exception as exc:
+    st.error(str(exc))
+    st.stop()
+
+
+t1,t2,t3,t4 = st.tabs(["Current Signal","Chart","Backtest","Signal Scanner"])
+with t1:
+    try:
+        live, quote_time = latest_price(symbol)
+    except Exception:
+        live, quote_time = None, "Unavailable"
     cols = st.columns(5)
     cols[0].metric("Latest Price", "Unavailable" if live is None else f"{live:,.2f}")
     cols[1].metric("Bar Close", f"{signal['close']:,.2f}")
@@ -105,13 +109,20 @@ with t4:
         min_count = 5 if max_count >= 5 else 1
         default_count = min(20, max_count)
         count = st.slider("Number of symbols", min_count, max_count, value=default_count)
+        filtered = pd.DataFrame()
         if st.button("Run Scanner"):
-            with st.spinner("Scanning..."): result=scan_symbols(sdf,scan_tf,count)
-            filtered=result[result.Signal.isin(allowed)].copy()
-        if rv: filtered=filtered[filtered["Volume Confirm"]==True]
-        if e20: filtered=filtered[filtered["Close > EMA20"]==True]
-        if e30: filtered=filtered[filtered["Close > EMA30"]==True]
-        if stack: filtered=filtered[filtered["EMA20 > EMA30"]==True]
-        st.dataframe(filtered,hide_index=True,use_container_width=True)
-        st.download_button("Download CSV",filtered.to_csv(index=False).encode(),file_name=f"{scan_market}_{scan_tf}_signals.csv")
+            with st.spinner("Scanning..."):
+                result = scan_symbols(sdf, scan_tf, count)
+                filtered = result[result.Signal.isin(allowed)].copy()
+                if rv:
+                    filtered = filtered[filtered["Volume Confirm"] == True]
+                if e20:
+                    filtered = filtered[filtered["Close > EMA20"] == True]
+                if e30:
+                    filtered = filtered[filtered["Close > EMA30"] == True]
+                if stack:
+                    filtered = filtered[filtered["EMA20 > EMA30"] == True]
+        if not filtered.empty:
+            st.dataframe(filtered, hide_index=True, use_container_width=True)
+            st.download_button("Download CSV", filtered.to_csv(index=False).encode(), file_name=f"{scan_market}_{scan_tf}_signals.csv")
 st.caption("Educational research tool only. Data may be delayed.")
