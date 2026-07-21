@@ -330,6 +330,28 @@ def build_email_report(limit: int | None = None) -> tuple[str, datetime, list[tu
     return email_body, current_time_et, attachments
 
 
+def save_report_preview(
+    html_body: str,
+    attachments: list[tuple[str, str, bytes]],
+    generated_time: datetime,
+) -> Path:
+    output_dir = Path("signal_reports") / generated_time.strftime("%Y%m%d_%H%M%S")
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    preview_file = output_dir / "signal_email_preview.html"
+    preview_file.write_text(html_body, encoding="utf-8")
+
+    for filename, _, content in attachments:
+        (output_dir / filename).write_bytes(content)
+
+    print(
+        "Saved report preview and attached CSVs to:",
+        output_dir.resolve(),
+    )
+
+    return output_dir
+
+
 def send_email(
     subject: str,
     html_body: str,
@@ -526,10 +548,20 @@ def main() -> None:
 
             return
 
+        preview_dir = save_report_preview(
+            html_body=html_body,
+            attachments=attachments,
+            generated_time=generated_time,
+        )
+
         send_email(
             subject=subject,
             html_body=html_body,
             attachments=attachments,
+        )
+
+        print(
+            "Daily and weekly signal email sent."
         )
 
         print(
