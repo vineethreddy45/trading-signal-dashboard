@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import smtplib
 import ssl
+import sys
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -472,6 +473,10 @@ def main() -> None:
     args = parser.parse_args()
 
     current_time_et = datetime.now(EASTERN)
+    print(
+        "Email report started at ET: "
+        f"{current_time_et:%Y-%m-%d %I:%M %p}"
+    )
 
     if (
         not args.force
@@ -484,40 +489,43 @@ def main() -> None:
 
         return
 
-    html_body, generated_time = (
-        build_email_report()
-    )
+    try:
+        html_body, generated_time = build_email_report()
 
-    subject = (
-        "Daily + Weekly EMA20/EMA30 Signals — "
-        f"{generated_time:%Y-%m-%d}"
-    )
-
-    if args.preview:
-        preview_file = Path(
-            "signal_email_preview.html"
+        subject = (
+            "Daily + Weekly EMA20/EMA30 Signals — "
+            f"{generated_time:%Y-%m-%d}"
         )
 
-        preview_file.write_text(
-            html_body,
-            encoding="utf-8",
+        if args.preview:
+            preview_file = Path(
+                "signal_email_preview.html"
+            )
+
+            preview_file.write_text(
+                html_body,
+                encoding="utf-8",
+            )
+
+            print(
+                "Preview created: "
+                f"{preview_file.resolve()}"
+            )
+
+            return
+
+        send_email(
+            subject=subject,
+            html_body=html_body,
         )
 
         print(
-            "Preview created: "
-            f"{preview_file.resolve()}"
+            "Daily and weekly signal email sent."
         )
 
-        return
-
-    send_email(
-        subject=subject,
-        html_body=html_body,
-    )
-
-    print(
-        "Daily and weekly signal email sent."
-    )
+    except Exception as exc:
+        print("Email report failed:", str(exc), file=sys.stderr)
+        raise
 
 
 if __name__ == "__main__":
