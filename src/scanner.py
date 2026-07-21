@@ -15,16 +15,35 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
             cfg = StrategyConfig(timeframe=timeframe, market=item.market)
             daily = download_history(item.symbol, "3y")
             signal = latest_signal(convert_timeframe(daily, timeframe), cfg)
-            rows.append({"Symbol": item.display_symbol, "Market": item.market,
-                         "Signal": signal["signal"], "Close": signal["close"],
-                         "EMA20": signal["ema20"], "EMA30": signal["ema30"],
-                         "Volume Confirm": signal["volume_confirm"], "Close > EMA20": signal["above_ema20"],
-                         "Close > EMA30": signal["above_ema30"], "EMA20 > EMA30": signal["ema_stack"],
-                         "Bar Date": signal["bar_date"]})
+            rows.append({
+                "Symbol": item.display_symbol,
+                "Market": item.market,
+                "Signal": signal["signal"],
+                "Close": signal["close"],
+                "EMA20": signal["ema20"],
+                "EMA30": signal["ema30"],
+                "Volume Confirm": signal["volume_confirm"],
+                "Close > EMA20": signal["above_ema20"],
+                "Close > EMA30": signal["above_ema30"],
+                "EMA20 > EMA30": signal["ema_stack"],
+                "Bar Date": signal["bar_date"],
+            })
         except Exception as exc:
-            rows.append({"Symbol": item.display_symbol, "Market": item.market,
-                         "Signal": "ERROR", "Error": str(exc)})
+            rows.append({
+                "Symbol": item.display_symbol,
+                "Market": item.market,
+                "Signal": "ERROR",
+                "Close": None,
+                "EMA20": None,
+                "EMA30": None,
+                "Volume Confirm": False,
+                "Close > EMA20": False,
+                "Close > EMA30": False,
+                "EMA20 > EMA30": False,
+                "Bar Date": None,
+                "Error": str(exc),
+            })
     result = pd.DataFrame(rows)
-    order = {"BREAKOUT BUY":1,"PULLBACK BUY":2,"WATCH":3,"NEUTRAL":4,"AVOID":5,"ERROR":9}
+    order = {"BREAKOUT BUY": 1, "PULLBACK BUY": 2, "WATCH": 3, "NEUTRAL": 4, "AVOID": 5, "ERROR": 9}
     result["_rank"] = result["Signal"].map(order).fillna(99)
-    return result.sort_values(["_rank","Market","Symbol"]).drop(columns="_rank")
+    return result.sort_values(["_rank", "Market", "Symbol"]).drop(columns="_rank")
