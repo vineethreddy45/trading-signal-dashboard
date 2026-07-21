@@ -376,6 +376,11 @@ def send_email(
             "EMAIL_TO does not contain a recipient."
         )
 
+    print(
+        "Preparing to send email to:",
+        ", ".join(recipients),
+    )
+
     message = EmailMessage()
 
     message["Subject"] = subject
@@ -426,8 +431,10 @@ def send_email(
                 smtp_username,
                 smtp_password,
             )
+            print("SMTP SSL login succeeded.")
 
             smtp.send_message(message)
+            print("SMTP SSL message sent.")
 
     else:
         with smtplib.SMTP(
@@ -445,8 +452,10 @@ def send_email(
                 smtp_username,
                 smtp_password,
             )
+            print("SMTP login succeeded.")
 
             smtp.send_message(message)
+            print("SMTP message sent.")
 
 
 def main() -> None:
