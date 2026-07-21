@@ -131,6 +131,8 @@ with t4:
                         filtered = filtered[filtered["Close > EMA30"] == True]
                     if stack:
                         filtered = filtered[filtered["EMA20 > EMA30"] == True]
+                    total_filtered = len(filtered)
+                    st.markdown(f"**Results:** {total_filtered} matching symbol{'s' if total_filtered != 1 else ''}")
                     if filtered.empty:
                         st.info("No symbols matched the selected filters. Try fewer restrictions.")
                     else:

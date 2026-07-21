@@ -243,30 +243,39 @@ def create_html_table(
     """
 
 
-def build_email_report() -> tuple[str, datetime]:
+def build_email_report(limit: int | None = None) -> tuple[str, datetime, list[tuple[str, str, bytes]]]:
     symbols = load_symbols()
 
     daily_results = scan_symbols(
         symbols_df=symbols,
         timeframe="Daily",
+        limit=limit,
+    )
+    print(
+        f"Daily scan completed: {len(daily_results)} rows "
+        f"(limit={limit})"
     )
 
     weekly_results = scan_symbols(
         symbols_df=symbols,
         timeframe="Weekly",
+        limit=limit,
+    )
+    print(
+        f"Weekly scan completed: {len(weekly_results)} rows "
+        f"(limit={limit})"
     )
 
     current_time_et = datetime.now(EASTERN)
 
-    daily_table = create_html_table(
-        daily_results,
-        "Daily Signals",
-    )
+    daily_filtered = filter_email_signals(daily_results)
+    weekly_filtered = filter_email_signals(weekly_results)
 
-    weekly_table = create_html_table(
-        weekly_results,
-        "Weekly Signals",
-    )
+    daily_csv = daily_filtered.to_csv(index=False).encode("utf-8")
+    weekly_csv = weekly_filtered.to_csv(index=False).encode("utf-8")
+
+    daily_count = len(daily_filtered)
+    weekly_count = len(weekly_filtered)
 
     email_body = f"""
     <html>
@@ -277,69 +286,54 @@ def build_email_report() -> tuple[str, datetime]:
                     color: #1f2328;
                 }}
 
-                table {{
-                    border-collapse: collapse;
-                    width: 100%;
-                    font-size: 13px;
-                    margin-bottom: 30px;
+                p {{
+                    font-size: 14px;
+                    line-height: 1.6;
                 }}
 
-                th {{
-                    background: #163a5f;
-                    color: white;
-                }}
-
-                th,
-                td {{
-                    border: 1px solid #d0d7de;
-                    padding: 7px;
-                    text-align: left;
+                strong {{
+                    color: #163a5f;
                 }}
             </style>
         </head>
 
         <body>
-            <h1>
-                Daily and Weekly Trading Signal Report
-            </h1>
+            <h1>Daily and Weekly Trading Signal Report</h1>
+
+            <p>Generated at {current_time_et:%Y-%m-%d %I:%M %p} Eastern Time.</p>
 
             <p>
-                Generated at
-                {current_time_et:%Y-%m-%d %I:%M %p}
-                Eastern Time.
+                Attached are the filtered signal CSV files.
+                Daily rows: <strong>{daily_count}</strong>.
+                Weekly rows: <strong>{weekly_count}</strong>.
             </p>
 
             <p>
-                Filter:
-                <strong>
-                    BREAKOUT BUY or WATCH
-                </strong>
-                with close above both
-                <strong>
-                    EMA20 and EMA30
-                </strong>.
+                Filter: <strong>BREAKOUT BUY</strong> or <strong>WATCH</strong>
+                with close above both <strong>EMA20</strong> and <strong>EMA30</strong>.
             </p>
-
-            {daily_table}
-
-            {weekly_table}
 
             <hr>
 
             <p style="font-size:12px;color:#666">
-                Educational research only.
-                Market data may be delayed.
+                Educational research only. Market data may be delayed.
             </p>
         </body>
     </html>
     """
 
-    return email_body, current_time_et
+    attachments = [
+        ("daily_signals.csv", "text/csv", daily_csv),
+        ("weekly_signals.csv", "text/csv", weekly_csv),
+    ]
+
+    return email_body, current_time_et, attachments
 
 
 def send_email(
     subject: str,
     html_body: str,
+    attachments: list[tuple[str, str, bytes]],
 ) -> None:
     load_dotenv()
 
@@ -395,6 +389,15 @@ def send_email(
         html_body,
         subtype="html",
     )
+
+    for filename, mimetype, content in attachments:
+        maintype, subtype = mimetype.split("/", 1)
+        message.add_attachment(
+            content,
+            maintype=maintype,
+            subtype=subtype,
+            filename=filename,
+        )
 
     smtp_host = os.environ["SMTP_HOST"]
     smtp_port = int(
@@ -499,7 +502,7 @@ def main() -> None:
         return
 
     try:
-        html_body, generated_time = build_email_report()
+        html_body, generated_time, attachments = build_email_report(limit=20)
 
         subject = (
             "Daily + Weekly EMA20/EMA30 Signals — "
@@ -526,6 +529,7 @@ def main() -> None:
         send_email(
             subject=subject,
             html_body=html_body,
+            attachments=attachments,
         )
 
         print(
