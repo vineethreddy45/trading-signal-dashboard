@@ -13,7 +13,7 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
     for item in source.itertuples(index=False):
         try:
             cfg = StrategyConfig(timeframe=timeframe, market=item.market)
-            daily = download_history(item.symbol, "3y")
+            daily = download_history(item.symbol, "1y")
             signal = latest_signal(convert_timeframe(daily, timeframe), cfg)
             rows.append({
                 "Symbol": item.display_symbol,
@@ -41,7 +41,6 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
                 "Close > EMA30": False,
                 "EMA20 > EMA30": False,
                 "Bar Date": None,
-                "Error": str(exc),
             })
     result = pd.DataFrame(rows)
     order = {"BREAKOUT BUY": 1, "PULLBACK BUY": 2, "WATCH": 3, "NEUTRAL": 4, "AVOID": 5, "ERROR": 9}

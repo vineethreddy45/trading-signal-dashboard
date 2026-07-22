@@ -8,7 +8,7 @@ from src.strategy import StrategyConfig, backtest, convert_timeframe, enrich, la
 
 st.set_page_config(page_title="Trading Signal Dashboard", layout="wide")
 st.title("Trading Signal Dashboard")
-st.caption("Daily and weekly EMA20, EMA30 and volume signals")
+st.caption("Daily and Weekly Swing Tradesignals")
 
 # Map UI market names to CSV market values
 MARKET_LABELS = {"India": "India", "US": "USA"}
@@ -46,7 +46,7 @@ with st.sidebar:
     display = st.selectbox("Symbol", filtered_df.display_symbol.tolist())
     symbol = filtered_df.loc[filtered_df.display_symbol == display, "symbol"].iloc[0]
     timeframe = st.radio("Timeframe", ["Daily", "Weekly"], horizontal=True)
-    period = st.selectbox("History", ["2y", "5y", "10y", "max"], index=1)
+    period = st.selectbox("History", ["1y", "3y", "5y", "max"], index=1)
     capital = st.number_input("Capital", min_value=1000.0, value=1_000_000.0 if market=="India" else 10_000.0, step=1000.0)
     risk_pct = st.slider("Risk per trade (%)", 0.25, 2.0, 1.0, 0.25)
     target_r = st.slider("Target R", 1.0, 5.0, 2.0, 0.5)
