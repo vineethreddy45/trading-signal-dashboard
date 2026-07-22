@@ -243,7 +243,7 @@ def create_html_table(
     """
 
 
-def build_email_report(limit: int | None = None) -> tuple[str, datetime, list[tuple[str, str, bytes]]]:
+def build_email_report(limit: int | None = None) -> tuple[str, datetime, list[tuple[str, str, bytes]], bool]:
     symbols = load_symbols()
 
     daily_results = scan_symbols(
@@ -276,6 +276,7 @@ def build_email_report(limit: int | None = None) -> tuple[str, datetime, list[tu
 
     daily_count = len(daily_filtered)
     weekly_count = len(weekly_filtered)
+    should_send = daily_count > 0 or weekly_count > 0
 
     email_body = f"""
     <html>
@@ -327,7 +328,7 @@ def build_email_report(limit: int | None = None) -> tuple[str, datetime, list[tu
         ("weekly_signals.csv", "text/csv", weekly_csv),
     ]
 
-    return email_body, current_time_et, attachments
+    return email_body, current_time_et, attachments, should_send
 
 
 def save_report_preview(
@@ -524,7 +525,14 @@ def main() -> None:
         return
 
     try:
-        html_body, generated_time, attachments = build_email_report(limit=20)
+        html_body, generated_time, attachments, should_send = build_email_report(limit=20)
+
+        if not should_send and not args.preview:
+            print(
+                "No Daily or Weekly signals met the EMA20/EMA30 filter."
+                " Email skipped."
+            )
+            return
 
         subject = (
             "Daily + Weekly EMA20/EMA30 Signals — "
