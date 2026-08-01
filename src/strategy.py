@@ -73,10 +73,10 @@ def enrich(data: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
 def latest_signal(data: pd.DataFrame, cfg: StrategyConfig) -> dict:
     df = enrich(data, cfg)
     row = df.iloc[-1]
-    above = df["ABOVE_EMA20"]
+    above = df["ABOVE_EMA20"].fillna(False).astype(bool)
 
     if row["ABOVE_EMA20"]:
-        cross = df.loc[above & ~above.shift(1).fillna(False)]
+        cross = df.loc[above & ~above.shift(1).fillna(False).astype(bool)]
         bar_date = cross.index[-1].date() if not cross.empty else row.name.date()
     else:
         above_ema20 = df.loc[above]
