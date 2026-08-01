@@ -53,10 +53,12 @@ Add:
 - `SMTP_PORT`: `587`
 - `SMTP_USERNAME`: your Gmail
 - `SMTP_PASSWORD`: Google App Password
+- `SMTP_USE_SSL`: optional, set to `true` for implicit SSL SMTP servers (default: `false`)
 - `EMAIL_FROM`: your Gmail
 - `EMAIL_TO`: recipient email
 
 The workflow sends Daily signals every evening and includes Weekly signals on Friday. GitHub Actions may start a few minutes late.
+If the required email secrets are not configured yet, the workflow logs a warning and skips the send step instead of failing the job.
 
 Test from GitHub → Actions → Send Trading Signal Email → Run workflow.
 
