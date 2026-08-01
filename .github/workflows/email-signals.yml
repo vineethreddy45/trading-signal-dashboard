@@ -37,6 +37,24 @@ jobs:
           echo "UTC time: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           echo "ET time: $(TZ=America/New_York date '+%Y-%m-%d %H:%M:%S ET')"
 
+      - name: Validate email secrets
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_USE_SSL: ${{ secrets.SMTP_USE_SSL }}
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: |
+          for var in SMTP_HOST SMTP_PORT SMTP_USERNAME SMTP_PASSWORD SMTP_USE_SSL EMAIL_FROM EMAIL_TO; do
+            if [ -z "${!var}" ]; then
+              echo "$var is missing"
+            else
+              echo "$var is set"
+            fi
+          done
+
       - name: Send scheduled email
         if: github.event_name == 'schedule'
         env:
