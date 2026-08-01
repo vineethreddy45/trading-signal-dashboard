@@ -145,12 +145,34 @@ st.markdown(
         box-shadow: none !important;
         border-color: rgba(148, 163, 184, 0.35) !important;
     }
+    [data-baseweb="popover"], [role="listbox"], [role="option"], [data-baseweb="menu"], ul[role="listbox"] {
+        background: #0f172a !important;
+        color: #e8edf8 !important;
+        border: 1px solid rgba(148, 163, 184, 0.35) !important;
+    }
+    [role="option"] > div, [role="option"] {
+        background: #0f172a !important;
+        color: #e8edf8 !important;
+    }
     .stTextInput label, .stSelectbox label, .stNumberInput label, .stCheckbox label, .stRadio label, .stMultiSelect label {
         color: #e8edf8 !important;
         font-weight: 500;
     }
     .stAlert, .stWarning, .stError, .stInfo {
         border-radius: 12px;
+    }
+    .stDataFrame td, .stDataFrame th {
+        background: rgba(15, 23, 42, 0.95) !important;
+        color: #e8edf8 !important;
+    }
+    .stCheckbox > label > span {
+        color: #e8edf8 !important;
+    }
+    [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div,
+    [data-testid="stSidebar"] .stSelectbox [role="listbox"],
+    [data-testid="stSidebar"] .stSelectbox [role="option"] {
+        background: #0f172a !important;
+        color: #e8edf8 !important;
     }
     </style>
     """,
@@ -364,10 +386,11 @@ with t4:
                             ) if str(ticker).strip() else ticker
                         )
                         display_df["Yahoo"] = "https://finance.yahoo.com/quote/" + display_df["Ticker"]
+                        display_df["TradingView"] = "https://www.tradingview.com/symbols/" + display_df["Ticker"] + "/"
                         if "Market Cap Value" in display_df.columns:
                             display_df = display_df.sort_values(["Market Cap Value", "Signal"], ascending=[False, True], na_position="last").copy()
                         display_df = display_df.reset_index(drop=True)
-                        view_df = display_df[["Company Name", "Ticker", "Market", "Market Cap", "Cap Tier", "Signal", "Bar Date", "Yahoo"]].copy()
+                        view_df = display_df[["Company Name", "Ticker", "Market", "Market Cap", "Cap Tier", "Signal", "Bar Date", "Yahoo", "TradingView"]].copy()
                         st.dataframe(
                             view_df,
                             hide_index=True,
@@ -381,6 +404,7 @@ with t4:
                                 "Signal": st.column_config.TextColumn("Signal"),
                                 "Bar Date": st.column_config.TextColumn("Bar Date"),
                                 "Yahoo": st.column_config.LinkColumn("Yahoo", display_text="Open"),
+                                "TradingView": st.column_config.LinkColumn("TradingView", display_text="Chart"),
                             },
                         )
                         st.download_button("Download CSV", filtered.to_csv(index=False).encode(), file_name=f"{scan_market}_{scan_tf}_{scan_market_cap.lower().replace(' ', '_')}_signals.csv")
