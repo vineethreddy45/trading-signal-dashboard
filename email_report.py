@@ -25,6 +25,16 @@ EMAIL_SIGNALS = {
 }
 
 
+def should_send_email_report(
+    daily_count: int,
+    weekly_count: int,
+    *,
+    send_empty_summary: bool = True,
+) -> bool:
+    """Keep the daily report cadence even when no signal rows qualify."""
+    return send_empty_summary or daily_count > 0 or weekly_count > 0
+
+
 def load_symbols() -> pd.DataFrame:
     file_path = Path("data/symbols.csv")
 
@@ -276,7 +286,16 @@ def build_email_report(limit: int | None = None) -> tuple[str, datetime, list[tu
 
     daily_count = len(daily_filtered)
     weekly_count = len(weekly_filtered)
-    should_send = daily_count > 0 or weekly_count > 0
+    should_send = should_send_email_report(
+        daily_count,
+        weekly_count,
+    )
+
+    print(
+        "Email summary counts: "
+        f"daily={daily_count}, weekly={weekly_count}, "
+        f"should_send={should_send}."
+    )
 
     email_body = f"""
     <html>
@@ -351,6 +370,10 @@ def save_report_preview(
     )
 
     return output_dir
+
+
+def log_status(status: str, reason: str) -> None:
+    print(f"Email report status: {status} | reason: {reason}")
 
 
 def send_email(
@@ -517,9 +540,9 @@ def main() -> None:
         not args.force
         and current_time_et.hour != 20
     ):
-        print(
-            "Email skipped. Current Eastern time is "
-            f"{current_time_et:%Y-%m-%d %I:%M %p}."
+        log_status(
+            "skipped",
+            "current time is outside the 8 PM ET send window",
         )
 
         return
@@ -529,10 +552,10 @@ def main() -> None:
 
         if not should_send and not args.preview:
             print(
-                "No Daily or Weekly signals met the EMA20/EMA30 filter."
-                " Email skipped."
+                "No Daily or Weekly signals met the EMA20/EMA30 filter. "
+                "The report is still being sent because the daily summary "
+                "schedule is enabled."
             )
-            return
 
         subject = (
             "Daily + Weekly EMA20/EMA30 Signals — "
@@ -553,6 +576,10 @@ def main() -> None:
                 "Preview created: "
                 f"{preview_file.resolve()}"
             )
+            log_status(
+                "preview",
+                "HTML preview was generated without sending email",
+            )
 
             return
 
@@ -568,16 +595,14 @@ def main() -> None:
             attachments=attachments,
         )
 
-        print(
-            "Daily and weekly signal email sent."
-        )
-
-        print(
-            "Daily and weekly signal email sent."
+        log_status(
+            "sent",
+            "email was generated and delivered successfully",
         )
 
     except Exception as exc:
         print("Email report failed:", str(exc), file=sys.stderr)
+        log_status("failed", str(exc))
         raise
 
 
