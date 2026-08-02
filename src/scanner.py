@@ -1,7 +1,6 @@
 from __future__ import annotations
 import sys
 from pathlib import Path
-from time import sleep
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import pandas as pd
@@ -18,26 +17,6 @@ MARKET_CAP_BUCKETS = {
 }
 
 
-def _fetch_ticker_info(symbol: str, retries: int = 2) -> dict:
-    last_exc = None
-    for attempt in range(retries + 1):
-        try:
-            ticker = yf.Ticker(symbol)
-            info = getattr(ticker, "info", {}) or {}
-            if info:
-                return info
-            fast_info = getattr(ticker, "fast_info", {}) or {}
-            return {"marketCap": fast_info.get("market_cap")}
-        except Exception as exc:
-            last_exc = exc
-            if attempt < retries:
-                sleep(0.2 * (attempt + 1))
-                continue
-    if last_exc is not None:
-        raise last_exc
-    return {}
-
-
 def market_cap_bucket(market_cap: float | int | None) -> str:
     if market_cap is None or market_cap <= 0:
         return "Unknown"
@@ -51,17 +30,13 @@ def market_cap_bucket(market_cap: float | int | None) -> str:
 
 
 def get_market_cap(symbol: str) -> float | None:
-    info = _fetch_ticker_info(symbol)
+    ticker = yf.Ticker(symbol)
+    info = getattr(ticker, "info", {}) or {}
     market_cap = info.get("marketCap")
+    if market_cap is None:
+        fast = getattr(ticker, "fast_info", {}) or {}
+        market_cap = fast.get("market_cap")
     return float(market_cap) if market_cap is not None else None
-
-
-def get_company_name(symbol: str) -> str:
-    try:
-        info = _fetch_ticker_info(symbol)
-    except Exception:
-        return symbol
-    return str(info.get("shortName") or info.get("longName") or symbol)
 
 
 def format_market_cap(value: float | int | None) -> str:
@@ -84,7 +59,6 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
             bucket = market_cap_bucket(market_cap)
             rows.append({
                 "Symbol": item.display_symbol,
-                "Ticker": item.symbol,
                 "Market": item.market,
                 "Market Cap": format_market_cap(market_cap),
                 "Market Cap Value": market_cap,
@@ -98,12 +72,10 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
                 "Close > EMA30": signal["above_ema30"],
                 "EMA20 > EMA30": signal["ema_stack"],
                 "Bar Date": signal["bar_date"],
-                "Error": "",
             })
-        except Exception as exc:
+        except Exception:
             rows.append({
                 "Symbol": item.display_symbol,
-                "Ticker": item.symbol,
                 "Market": item.market,
                 "Market Cap": "N/A",
                 "Market Cap Value": None,
@@ -117,7 +89,6 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
                 "Close > EMA30": False,
                 "EMA20 > EMA30": False,
                 "Bar Date": None,
-                "Error": str(exc),
             })
     result = pd.DataFrame(rows)
     order = {"BREAKOUT BUY": 1, "PULLBACK BUY": 2, "WATCH": 3, "NEUTRAL": 4, "AVOID": 5, "ERROR": 9}
