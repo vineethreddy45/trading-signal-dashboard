@@ -52,18 +52,25 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
     rows, source = [], symbols_df.head(limit) if limit else symbols_df
     for item in source.itertuples(index=False):
         try:
+            quote_symbol = str(item.symbol).strip().upper()
+            display_symbol = str(item.display_symbol).strip().upper()
+            if not quote_symbol:
+                raise ValueError("Missing symbol")
+
             cfg = StrategyConfig(timeframe=timeframe, market=item.market)
-            daily = download_history(item.symbol, "1y")
+            daily = download_history(quote_symbol, "1y")
             signal = latest_signal(convert_timeframe(daily, timeframe), cfg)
-            market_cap = get_market_cap(item.symbol)
+            market_cap = get_market_cap(quote_symbol)
             bucket = market_cap_bucket(market_cap)
             rows.append({
-                "Symbol": item.display_symbol,
+                "Symbol": display_symbol,
+                "Quote Symbol": quote_symbol,
                 "Market": item.market,
                 "Market Cap": format_market_cap(market_cap),
                 "Market Cap Value": market_cap,
                 "Market Cap Bucket": bucket,
                 "Signal": signal["signal"],
+                "Error": "",
                 "Close": signal["close"],
                 "EMA20": signal["ema20"],
                 "EMA30": signal["ema30"],
@@ -73,14 +80,16 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
                 "EMA20 > EMA30": signal["ema_stack"],
                 "Bar Date": signal["bar_date"],
             })
-        except Exception:
+        except Exception as exc:
             rows.append({
-                "Symbol": item.display_symbol,
+                "Symbol": str(item.display_symbol).strip().upper(),
+                "Quote Symbol": str(item.symbol).strip().upper(),
                 "Market": item.market,
                 "Market Cap": "N/A",
                 "Market Cap Value": None,
                 "Market Cap Bucket": "Unknown",
                 "Signal": "ERROR",
+            "Error": str(exc),
                 "Close": None,
                 "EMA20": None,
                 "EMA30": None,

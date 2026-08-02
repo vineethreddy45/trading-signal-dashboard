@@ -1,5 +1,8 @@
 from pathlib import Path
 import html as html_lib
+import logging
+import resource
+import sys
 from urllib.parse import quote_plus
 import pandas as pd
 import plotly.graph_objects as go
@@ -10,6 +13,19 @@ from src.scanner import scan_symbols
 from src.strategy import StrategyConfig, backtest, convert_timeframe, enrich, latest_signal
 
 st.set_page_config(page_title="Trading Signal Dashboard", layout="wide")
+
+logger = logging.getLogger("trading_dashboard")
+
+
+def process_memory_mb() -> float:
+    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    if sys.platform == "darwin":
+        return usage / (1024 * 1024)
+    return usage / 1024
+
+
+def log_runtime_event(event: str):
+    logger.info("%s | memory_mb=%.1f", event, process_memory_mb())
 
 st.markdown(
     """
@@ -183,6 +199,7 @@ st.markdown(
 
 st.title("📈 Trading Signal Dashboard")
 st.caption("Daily and weekly swing trade ideas with a cleaner scanner workflow.")
+log_runtime_event("app_render_start")
 
 # Map UI market names to CSV market values
 MARKET_LABELS = {"India": "India", "US": "USA"}
@@ -211,6 +228,33 @@ def load_symbols():
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_history(symbol, period):
     return download_history(symbol, period)
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def company_name_from_ticker(ticker: str) -> str:
+    ticker = str(ticker).strip()
+    if not ticker:
+        return ticker
+    try:
+        return yf.Ticker(ticker).info.get("shortName") or ticker
+    except Exception:
+        return ticker
+
+
+def quote_symbol_for_row(row: pd.Series) -> str:
+    direct = str(row.get("Quote Symbol", "")).strip().upper()
+    if direct:
+        return direct
+    symbol = str(row.get("Symbol", "")).strip().upper()
+    market = str(row.get("Market", "")).strip().upper()
+    if market == "INDIA" and symbol and "." not in symbol:
+        return f"{symbol}.NS"
+    return symbol
+
+
+@st.cache_data(ttl=900, show_spinner=False)
+def run_scanner_cached(symbols_df: pd.DataFrame, timeframe: str, count: int) -> pd.DataFrame:
+    return scan_symbols(symbols_df, timeframe, count)
 
 
 def apply_symbol_from_query(symbols_df: pd.DataFrame) -> None:
@@ -286,7 +330,6 @@ def render_scanner_table(rows: pd.DataFrame, selected_market: str) -> None:
 symbols = load_symbols()
 if "_defaults_initialized" not in st.session_state:
     st.session_state["market_selector"] = None
-    st.session_state["symbol_selector"] = None
     st.session_state["timeframe_selector"] = None
     st.session_state["_defaults_initialized"] = True
 apply_symbol_from_query(symbols)
@@ -320,19 +363,22 @@ with st.sidebar:
         else:
             display_options = filtered_df.display_symbol.tolist()
             selected_symbol_state = st.session_state.get("selected_symbol")
-            symbol_index = None
-            if selected_symbol_state is not None:
+            current_display = st.session_state.get("symbol_selector")
+
+            # Initialize or repair symbol selection only when current value is missing/invalid.
+            if (current_display not in display_options) and selected_symbol_state is not None:
                 current_match = filtered_df[
                     filtered_df["symbol"].astype(str).str.upper() == str(selected_symbol_state).upper()
                 ]
                 if not current_match.empty:
-                    default_display = current_match.iloc[0]["display_symbol"]
-                    symbol_index = display_options.index(default_display)
+                    st.session_state["symbol_selector"] = current_match.iloc[0]["display_symbol"]
+
+            if st.session_state.get("symbol_selector") not in display_options:
+                st.session_state["symbol_selector"] = display_options[0]
 
             display = st.selectbox(
                 "Symbol",
                 display_options,
-                index=symbol_index,
                 key="symbol_selector",
                 placeholder="Select symbol",
             )
@@ -417,11 +463,15 @@ with t4:
     scan_market_cap = st.selectbox("Market Cap", MARKET_CAP_OPTIONS, index=0, help="Mega Cap = $200B+, Large Cap = $10B-$200B, Mid Cap = $2B-$10B")
     signal_options = ["BREAKOUT BUY", "PULLBACK BUY", "WATCH", "NEUTRAL", "AVOID"]
     default_signals = ["BREAKOUT BUY", "PULLBACK BUY", "WATCH"]
+    for option in signal_options:
+        key_name = f"signal_filter_{option.replace(' ', '_')}"
+        if key_name not in st.session_state:
+            st.session_state[key_name] = option in default_signals
     signal_checkboxes = {}
     signal_cols = st.columns(4)
     for idx, option in enumerate(signal_options):
         with signal_cols[idx % 4]:
-            signal_checkboxes[option] = st.checkbox(option, value=option in default_signals, key=f"signal_filter_{option.replace(' ', '_')}")
+            signal_checkboxes[option] = st.checkbox(option, key=f"signal_filter_{option.replace(' ', '_')}")
     allowed = [option for option in signal_options if signal_checkboxes.get(option, False)]
     if not allowed:
         st.warning("Please select at least one signal type to scan.")
@@ -440,13 +490,19 @@ with t4:
         min_count = 5 if max_count >= 5 else 1
         default_count = min(20, max_count)
         count = st.slider("Number of symbols", min_count, max_count, value=default_count)
-        filtered = pd.DataFrame()
+        if "scanner_last_result" not in st.session_state:
+            st.session_state["scanner_last_result"] = pd.DataFrame()
+        if "scanner_last_failed" not in st.session_state:
+            st.session_state["scanner_last_failed"] = pd.DataFrame()
         if st.button("Run Scanner"):
             if not allowed:
                 st.warning("Please select at least one signal type to scan.")
             else:
                 with st.spinner("Scanning..."):
-                    result = scan_symbols(sdf, scan_tf, count)
+                    log_runtime_event("scanner_start")
+                    result = run_scanner_cached(sdf, scan_tf, count)
+                    failed = result[result["Signal"] == "ERROR"].copy()
+                    st.session_state["scanner_last_failed"] = failed.copy()
                     filtered = result[result.Signal.isin(allowed)].copy()
                     if scan_market_cap != "All":
                         filtered = filtered[filtered["Market Cap Bucket"] == scan_market_cap]
@@ -458,34 +514,86 @@ with t4:
                         filtered = filtered[filtered["Close > EMA30"] == True]
                     if stack:
                         filtered = filtered[filtered["EMA20 > EMA30"] == True]
-                    total_filtered = len(filtered)
-                    st.markdown(f"**Results:** {total_filtered} matching symbol{'s' if total_filtered != 1 else ''}")
-                    if filtered.empty:
-                        st.info("No symbols matched the selected filters. Try fewer restrictions.")
-                    else:
-                        display_df = filtered.copy()
-                        if "Market Cap Value" in display_df.columns:
-                            display_df["Market Cap"] = display_df["Market Cap Value"].apply(
-                                lambda v: (
-                                    f"{v/1_000_000_000_000:.1f}T" if v and v >= 1_000_000_000_000
-                                    else f"{v/1_000_000_000:.1f}B" if v and v >= 1_000_000_000
-                                    else f"{v/1_000_000:.1f}M" if v and v >= 1_000_000
-                                    else f"{v:,.0f}"
-                                )
-                            )
-                            display_df["Cap Tier"] = display_df["Market Cap Bucket"].astype(str)
-                        display_df["Ticker"] = display_df["Symbol"].astype(str)
-                        display_df["Company Name"] = display_df["Ticker"].apply(
-                            lambda ticker: (
-                                yf.Ticker(ticker).info.get("shortName") or ticker
-                            ) if str(ticker).strip() else ticker
-                        )
-                        display_df["Yahoo"] = "https://finance.yahoo.com/quote/" + display_df["Ticker"]
-                        display_df["TradingView"] = "https://www.tradingview.com/symbols/" + display_df["Ticker"] + "/"
-                        if "Market Cap Value" in display_df.columns:
-                            display_df = display_df.sort_values(["Market Cap Value", "Signal"], ascending=[False, True], na_position="last").copy()
-                        display_df = display_df.reset_index(drop=True)
-                        view_df = display_df[["Company Name", "Ticker", "Market", "Market Cap", "Cap Tier", "Signal", "Bar Date", "Yahoo", "TradingView"]].copy()
-                        render_scanner_table(view_df, scan_market)
-                        st.download_button("Download CSV", filtered.to_csv(index=False).encode(), file_name=f"{scan_market}_{scan_tf}_{scan_market_cap.lower().replace(' ', '_')}_signals.csv")
+                    st.session_state["scanner_last_result"] = filtered.copy()
+                    log_runtime_event("scanner_done")
+
+        filtered = st.session_state.get("scanner_last_result", pd.DataFrame()).copy()
+        failed = st.session_state.get("scanner_last_failed", pd.DataFrame()).copy()
+        total_filtered = len(filtered)
+        st.markdown(f"**Results:** {total_filtered} matching symbol{'s' if total_filtered != 1 else ''}")
+        if not failed.empty:
+            st.warning(f"Skipped {len(failed)} symbol{'s' if len(failed) != 1 else ''} due to data errors.")
+            with st.expander("Failed Symbols"):
+                failed_view = failed[["Symbol", "Quote Symbol", "Error"]].copy()
+                st.dataframe(failed_view, hide_index=True, width="stretch")
+        if filtered.empty:
+            st.info("Run scanner to load results with current filters.")
+        else:
+            sort_order = st.selectbox(
+                "Sort results by",
+                [
+                    "Market Cap (High to Low)",
+                    "Market Cap (Low to High)",
+                    "Signal (Best to Worst)",
+                    "Signal (Worst to Best)",
+                    "Bar Date (Latest First)",
+                    "Bar Date (Oldest First)",
+                    "Ticker (A-Z)",
+                    "Ticker (Z-A)",
+                ],
+                key="scanner_sort_order",
+            )
+
+            display_df = filtered.copy()
+            if "Market Cap Value" in display_df.columns:
+                display_df["Market Cap"] = display_df["Market Cap Value"].apply(
+                    lambda v: (
+                        f"{v/1_000_000_000_000:.1f}T" if v and v >= 1_000_000_000_000
+                        else f"{v/1_000_000_000:.1f}B" if v and v >= 1_000_000_000
+                        else f"{v/1_000_000:.1f}M" if v and v >= 1_000_000
+                        else f"{v:,.0f}"
+                    )
+                )
+                display_df["Cap Tier"] = display_df["Market Cap Bucket"].astype(str)
+            display_df["Ticker"] = display_df["Symbol"].astype(str)
+            display_df["Quote Symbol"] = display_df.apply(quote_symbol_for_row, axis=1)
+            display_df["Company Name"] = display_df["Quote Symbol"].apply(
+                company_name_from_ticker
+            )
+            display_df["Yahoo"] = "https://finance.yahoo.com/quote/" + display_df["Quote Symbol"]
+            display_df["TradingView"] = "https://www.tradingview.com/symbols/" + display_df["Quote Symbol"] + "/"
+
+            signal_rank = {
+                "BREAKOUT BUY": 1,
+                "PULLBACK BUY": 2,
+                "WATCH": 3,
+                "NEUTRAL": 4,
+                "AVOID": 5,
+                "ERROR": 9,
+            }
+            display_df["_signal_rank"] = display_df["Signal"].map(signal_rank).fillna(99)
+            display_df["_bar_date"] = pd.to_datetime(display_df["Bar Date"], errors="coerce")
+
+            if sort_order == "Market Cap (High to Low)" and "Market Cap Value" in display_df.columns:
+                display_df = display_df.sort_values(["Market Cap Value", "_signal_rank"], ascending=[False, True], na_position="last")
+            elif sort_order == "Market Cap (Low to High)" and "Market Cap Value" in display_df.columns:
+                display_df = display_df.sort_values(["Market Cap Value", "_signal_rank"], ascending=[True, True], na_position="last")
+            elif sort_order == "Signal (Best to Worst)":
+                display_df = display_df.sort_values(["_signal_rank", "Market Cap Value"], ascending=[True, False], na_position="last")
+            elif sort_order == "Signal (Worst to Best)":
+                display_df = display_df.sort_values(["_signal_rank", "Market Cap Value"], ascending=[False, False], na_position="last")
+            elif sort_order == "Bar Date (Latest First)":
+                display_df = display_df.sort_values(["_bar_date", "_signal_rank"], ascending=[False, True], na_position="last")
+            elif sort_order == "Bar Date (Oldest First)":
+                display_df = display_df.sort_values(["_bar_date", "_signal_rank"], ascending=[True, True], na_position="last")
+            elif sort_order == "Ticker (A-Z)":
+                display_df = display_df.sort_values(["Ticker"], ascending=[True], na_position="last")
+            elif sort_order == "Ticker (Z-A)":
+                display_df = display_df.sort_values(["Ticker"], ascending=[False], na_position="last")
+
+            display_df = display_df.drop(columns=["_signal_rank", "_bar_date"], errors="ignore")
+            display_df = display_df.reset_index(drop=True)
+            view_df = display_df[["Company Name", "Ticker", "Market", "Market Cap", "Cap Tier", "Signal", "Bar Date", "Yahoo", "TradingView"]].copy()
+            render_scanner_table(view_df, scan_market)
+            st.download_button("Download CSV", display_df.to_csv(index=False).encode(), file_name=f"{scan_market}_{scan_tf}_{scan_market_cap.lower().replace(' ', '_')}_signals.csv")
 st.caption("Educational research tool only. Data may be delayed.")
