@@ -2,11 +2,9 @@ from pathlib import Path
 import html as html_lib
 from urllib.parse import quote_plus
 import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
-import yfinance as yf
 from src.market_data import download_history, latest_price
-from src.scanner import scan_symbols
+from src.scanner import get_company_name, scan_symbols
 from src.strategy import StrategyConfig, backtest, convert_timeframe, enrich, latest_signal
 
 st.set_page_config(page_title="Trading Signal Dashboard", layout="wide")
@@ -202,6 +200,30 @@ MARKET_CAP_HELP = {
     "Mid Cap": "$2B to $10B",
 }
 
+SCAN_PRESETS = {
+    "Balanced": {
+        "signals": ["BREAKOUT BUY", "PULLBACK BUY", "WATCH"],
+        "require_volume": True,
+        "require_close_ema20": False,
+        "require_close_ema30": False,
+        "require_ema_stack": False,
+    },
+    "Conservative": {
+        "signals": ["BREAKOUT BUY", "WATCH"],
+        "require_volume": True,
+        "require_close_ema20": True,
+        "require_close_ema30": True,
+        "require_ema_stack": True,
+    },
+    "Aggressive Breakout": {
+        "signals": ["BREAKOUT BUY", "PULLBACK BUY"],
+        "require_volume": False,
+        "require_close_ema20": True,
+        "require_close_ema30": False,
+        "require_ema_stack": True,
+    },
+}
+
 
 @st.cache_data(ttl=3600)
 def load_symbols():
@@ -283,7 +305,60 @@ def render_scanner_table(rows: pd.DataFrame, selected_market: str) -> None:
     st.markdown("".join(table), unsafe_allow_html=True)
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def run_scan_cached(
+    symbols_rows: tuple[tuple[str, str, str], ...],
+    timeframe: str,
+    limit: int,
+) -> pd.DataFrame:
+    scan_df = pd.DataFrame(
+        symbols_rows,
+        columns=["symbol", "market", "display_symbol"],
+    )
+    return scan_symbols(scan_df, timeframe, limit)
+
+
+def apply_scanner_preset(preset_name: str) -> None:
+    preset = SCAN_PRESETS[preset_name]
+    signal_options = ["BREAKOUT BUY", "PULLBACK BUY", "WATCH", "NEUTRAL", "AVOID"]
+    for option in signal_options:
+        st.session_state[f"signal_filter_{option.replace(' ', '_')}"] = option in preset["signals"]
+    st.session_state["scanner_require_volume"] = preset["require_volume"]
+    st.session_state["scanner_require_close_ema20"] = preset["require_close_ema20"]
+    st.session_state["scanner_require_close_ema30"] = preset["require_close_ema30"]
+    st.session_state["scanner_require_ema_stack"] = preset["require_ema_stack"]
+
+
+def init_watchlist() -> None:
+    if "watchlist" not in st.session_state:
+        st.session_state["watchlist"] = []
+
+
+def init_scanner_state() -> None:
+    if "scanner_display_df" not in st.session_state:
+        st.session_state["scanner_display_df"] = None
+    if "scanner_filtered_df" not in st.session_state:
+        st.session_state["scanner_filtered_df"] = None
+    if "scanner_total_filtered" not in st.session_state:
+        st.session_state["scanner_total_filtered"] = 0
+
+
+def add_to_watchlist(tickers: list[str]) -> None:
+    existing = set(st.session_state.get("watchlist", []))
+    existing.update([t for t in tickers if t])
+    st.session_state["watchlist"] = sorted(existing)
+
+
+def remove_from_watchlist(tickers: list[str]) -> None:
+    existing = set(st.session_state.get("watchlist", []))
+    for ticker in tickers:
+        existing.discard(ticker)
+    st.session_state["watchlist"] = sorted(existing)
+
+
 symbols = load_symbols()
+init_watchlist()
+init_scanner_state()
 if "_defaults_initialized" not in st.session_state:
     st.session_state["market_selector"] = None
     st.session_state["symbol_selector"] = None
@@ -363,7 +438,6 @@ cfg = StrategyConfig(timeframe=timeframe, capital=capital)
 try:
     daily = load_history(symbol, period)
     bars = convert_timeframe(daily, timeframe)
-    chart_data = enrich(bars, cfg)
     signal = latest_signal(bars, cfg)
     trades, equity, metrics = backtest(bars, cfg)
 except Exception as exc:
@@ -371,8 +445,15 @@ except Exception as exc:
     st.stop()
 
 
-t1, t3, t4 = st.tabs(["Overview", "Backtest", "Signal Scanner"])
-with t1:
+section = st.radio(
+    "Section",
+    ["Overview", "Backtest", "Signal Scanner", "Watchlist"],
+    horizontal=True,
+    key="active_section",
+    label_visibility="collapsed",
+)
+
+if section == "Overview":
     try:
         live, quote_time = latest_price(symbol)
     except Exception:
@@ -403,33 +484,58 @@ with t1:
     st.dataframe(pd.DataFrame({"Condition":["Close above EMA20","Close above EMA30","EMA20 above EMA30","Volume above average"],
                                "Result":[signal["above_ema20"],signal["above_ema30"],signal["ema_stack"],signal["volume_confirm"]]}), hide_index=True, width="stretch")
     st.caption(f"Signal bar: {signal['bar_date']} | Quote: {quote_time}")
-with t3:
+
+if section == "Backtest":
     c=st.columns(5)
     c[0].metric("Trades",metrics["trades"]); c[1].metric("Win Rate",f"{metrics['win_rate']:.1f}%")
     c[2].metric("Return",f"{metrics['return_pct']:.1f}%"); c[3].metric("Net Profit",f"{metrics['net_profit']:,.2f}")
     c[4].metric("Max Drawdown",f"{metrics['max_drawdown_pct']:.1f}%")
     if not trades.empty: st.dataframe(trades, width="stretch")
-with t4:
+
+if section == "Signal Scanner":
     st.subheader("Signal scanner")
     st.caption("Filter by market, capitalization, and signal strength to find the best setups quickly.")
+    preset_name = st.selectbox("Scanner Preset", list(SCAN_PRESETS.keys()), index=0)
+    p1, p2 = st.columns([1, 1])
+    if p1.button("Apply Preset", key="apply_preset"):
+        apply_scanner_preset(preset_name)
+        st.success(f"Applied preset: {preset_name}")
+    if p2.button("Refresh Scanner Cache", key="refresh_scanner_cache"):
+        run_scan_cached.clear()
+        st.success("Scanner cache cleared.")
+
     scan_market = st.selectbox("Scanner Market", ["India", "US"], key="sm")
     scan_tf = st.radio("Scanner Timeframe", ["Daily", "Weekly"], horizontal=True)
     scan_market_cap = st.selectbox("Market Cap", MARKET_CAP_OPTIONS, index=0, help="Mega Cap = $200B+, Large Cap = $10B-$200B, Mid Cap = $2B-$10B")
+    scanner_sort_mode = st.selectbox(
+        "Sort Results",
+        [
+            "Market Cap (High to Low)",
+            "Market Cap (Low to High)",
+            "Signal Rank",
+        ],
+        index=0,
+        key="scanner_sort_mode",
+    )
     signal_options = ["BREAKOUT BUY", "PULLBACK BUY", "WATCH", "NEUTRAL", "AVOID"]
     default_signals = ["BREAKOUT BUY", "PULLBACK BUY", "WATCH"]
+    for option in signal_options:
+        key_name = f"signal_filter_{option.replace(' ', '_')}"
+        if key_name not in st.session_state:
+            st.session_state[key_name] = option in default_signals
     signal_checkboxes = {}
     signal_cols = st.columns(4)
     for idx, option in enumerate(signal_options):
         with signal_cols[idx % 4]:
-            signal_checkboxes[option] = st.checkbox(option, value=option in default_signals, key=f"signal_filter_{option.replace(' ', '_')}")
+            signal_checkboxes[option] = st.checkbox(option, key=f"signal_filter_{option.replace(' ', '_')}")
     allowed = [option for option in signal_options if signal_checkboxes.get(option, False)]
     if not allowed:
         st.warning("Please select at least one signal type to scan.")
     f1, f2, f3, f4 = st.columns(4)
-    rv = f1.checkbox("Require volume", value=True)
-    e20 = f2.checkbox("Require close > EMA20")
-    e30 = f3.checkbox("Require close > EMA30")
-    stack = f4.checkbox("Require EMA20 > EMA30")
+    rv = f1.checkbox("Require volume", value=True, key="scanner_require_volume")
+    e20 = f2.checkbox("Require close > EMA20", key="scanner_require_close_ema20")
+    e30 = f3.checkbox("Require close > EMA30", key="scanner_require_close_ema30")
+    stack = f4.checkbox("Require EMA20 > EMA30", key="scanner_require_ema_stack")
     # Use the same mapping as the sidebar so UI labels ("US") map to CSV values ("USA")
     scan_market_value = MARKET_LABELS.get(scan_market, scan_market)
     sdf = symbols[symbols.market == scan_market_value]
@@ -440,13 +546,17 @@ with t4:
         min_count = 5 if max_count >= 5 else 1
         default_count = min(20, max_count)
         count = st.slider("Number of symbols", min_count, max_count, value=default_count)
-        filtered = pd.DataFrame()
         if st.button("Run Scanner"):
             if not allowed:
                 st.warning("Please select at least one signal type to scan.")
             else:
                 with st.spinner("Scanning..."):
-                    result = scan_symbols(sdf, scan_tf, count)
+                    scan_rows = tuple(
+                        sdf[["symbol", "market", "display_symbol"]]
+                        .head(count)
+                        .itertuples(index=False, name=None)
+                    )
+                    result = run_scan_cached(scan_rows, scan_tf, count)
                     filtered = result[result.Signal.isin(allowed)].copy()
                     if scan_market_cap != "All":
                         filtered = filtered[filtered["Market Cap Bucket"] == scan_market_cap]
@@ -458,34 +568,114 @@ with t4:
                         filtered = filtered[filtered["Close > EMA30"] == True]
                     if stack:
                         filtered = filtered[filtered["EMA20 > EMA30"] == True]
+
                     total_filtered = len(filtered)
-                    st.markdown(f"**Results:** {total_filtered} matching symbol{'s' if total_filtered != 1 else ''}")
                     if filtered.empty:
-                        st.info("No symbols matched the selected filters. Try fewer restrictions.")
+                        st.session_state["scanner_display_df"] = None
+                        st.session_state["scanner_filtered_df"] = None
+                        st.session_state["scanner_total_filtered"] = 0
                     else:
                         display_df = filtered.copy()
                         if "Market Cap Value" in display_df.columns:
                             display_df["Market Cap"] = display_df["Market Cap Value"].apply(
                                 lambda v: (
-                                    f"{v/1_000_000_000_000:.1f}T" if v and v >= 1_000_000_000_000
-                                    else f"{v/1_000_000_000:.1f}B" if v and v >= 1_000_000_000
-                                    else f"{v/1_000_000:.1f}M" if v and v >= 1_000_000
-                                    else f"{v:,.0f}"
+                                    f"{v/1_000_000_000_000:.1f}T" if pd.notna(v) and v >= 1_000_000_000_000
+                                    else f"{v/1_000_000_000:.1f}B" if pd.notna(v) and v >= 1_000_000_000
+                                    else f"{v/1_000_000:.1f}M" if pd.notna(v) and v >= 1_000_000
+                                    else "N/A"
                                 )
                             )
                             display_df["Cap Tier"] = display_df["Market Cap Bucket"].astype(str)
-                        display_df["Ticker"] = display_df["Symbol"].astype(str)
-                        display_df["Company Name"] = display_df["Ticker"].apply(
-                            lambda ticker: (
-                                yf.Ticker(ticker).info.get("shortName") or ticker
-                            ) if str(ticker).strip() else ticker
-                        )
+                        display_df["Ticker"] = display_df["Ticker"].astype(str)
+                        display_df["Company Name"] = display_df["Ticker"].apply(get_company_name)
                         display_df["Yahoo"] = "https://finance.yahoo.com/quote/" + display_df["Ticker"]
                         display_df["TradingView"] = "https://www.tradingview.com/symbols/" + display_df["Ticker"] + "/"
-                        if "Market Cap Value" in display_df.columns:
-                            display_df = display_df.sort_values(["Market Cap Value", "Signal"], ascending=[False, True], na_position="last").copy()
                         display_df = display_df.reset_index(drop=True)
-                        view_df = display_df[["Company Name", "Ticker", "Market", "Market Cap", "Cap Tier", "Signal", "Bar Date", "Yahoo", "TradingView"]].copy()
-                        render_scanner_table(view_df, scan_market)
-                        st.download_button("Download CSV", filtered.to_csv(index=False).encode(), file_name=f"{scan_market}_{scan_tf}_{scan_market_cap.lower().replace(' ', '_')}_signals.csv")
+                        st.session_state["scanner_display_df"] = display_df
+                        st.session_state["scanner_filtered_df"] = filtered
+                        st.session_state["scanner_total_filtered"] = total_filtered
+
+        stored_total = st.session_state.get("scanner_total_filtered", 0)
+        stored_display_df = st.session_state.get("scanner_display_df")
+        stored_filtered_df = st.session_state.get("scanner_filtered_df")
+
+        if stored_display_df is None or stored_filtered_df is None:
+            if stored_total == 0:
+                st.info("Run Scanner to load results.")
+            else:
+                st.info("No symbols matched the selected filters. Try fewer restrictions.")
+        else:
+            sort_df = stored_display_df.copy()
+            if scanner_sort_mode == "Market Cap (High to Low)":
+                sort_df["Market Cap Value"] = pd.to_numeric(sort_df.get("Market Cap Value"), errors="coerce")
+                sort_df = sort_df.sort_values(["Market Cap Value", "Signal"], ascending=[False, True], na_position="last")
+            elif scanner_sort_mode == "Market Cap (Low to High)":
+                sort_df["Market Cap Value"] = pd.to_numeric(sort_df.get("Market Cap Value"), errors="coerce")
+                sort_df = sort_df.sort_values(["Market Cap Value", "Signal"], ascending=[True, True], na_position="last")
+            else:
+                signal_rank = {"BREAKOUT BUY": 1, "PULLBACK BUY": 2, "WATCH": 3, "NEUTRAL": 4, "AVOID": 5, "ERROR": 9}
+                sort_df["_signal_rank"] = sort_df["Signal"].map(signal_rank).fillna(99)
+                sort_df = sort_df.sort_values(["_signal_rank", "Company Name"], ascending=[True, True]).drop(columns="_signal_rank")
+
+            view_df = sort_df[["Company Name", "Ticker", "Market", "Market Cap", "Cap Tier", "Signal", "Bar Date", "Yahoo", "TradingView"]].copy()
+            st.markdown(f"**Results:** {stored_total} matching symbol{'s' if stored_total != 1 else ''}")
+            render_scanner_table(view_df, scan_market)
+
+            unique_tickers = sorted(view_df["Ticker"].dropna().astype(str).unique().tolist())
+            to_add = st.multiselect("Add symbols to watchlist", unique_tickers, key="watchlist_add_select")
+            if st.button("Add to Watchlist", key="watchlist_add_btn"):
+                add_to_watchlist(to_add)
+                st.success(f"Added {len(to_add)} symbol(s) to watchlist.")
+
+            error_count = int((stored_filtered_df["Signal"] == "ERROR").sum())
+            if error_count:
+                st.warning(f"{error_count} symbol(s) had data errors and were marked as ERROR.")
+
+            st.download_button(
+                "Download CSV",
+                stored_filtered_df.to_csv(index=False).encode(),
+                file_name=f"{scan_market}_{scan_tf}_{scan_market_cap.lower().replace(' ', '_')}_signals.csv",
+            )
+
+if section == "Watchlist":
+    st.subheader("Watchlist")
+    watchlist = st.session_state.get("watchlist", [])
+    if not watchlist:
+        st.info("No symbols added yet. Use Signal Scanner to add symbols.")
+    else:
+        wl_market = st.selectbox("Watchlist Market", ["US", "India"], index=0, key="watchlist_market")
+        wl_tf = st.radio("Watchlist Timeframe", ["Daily", "Weekly"], horizontal=True, key="watchlist_timeframe")
+        watch_rows = []
+        for ticker in watchlist:
+            try:
+                cfg_wl = StrategyConfig(timeframe=wl_tf, market=MARKET_LABELS.get(wl_market, wl_market))
+                daily_wl = load_history(ticker, "1y")
+                signal_wl = latest_signal(convert_timeframe(daily_wl, wl_tf), cfg_wl)
+                watch_rows.append(
+                    {
+                        "Ticker": ticker,
+                        "Company Name": get_company_name(ticker),
+                        "Signal": signal_wl["signal"],
+                        "Bar Date": signal_wl["bar_date"],
+                        "Close": signal_wl["close"],
+                    }
+                )
+            except Exception as exc:
+                watch_rows.append(
+                    {
+                        "Ticker": ticker,
+                        "Company Name": ticker,
+                        "Signal": "ERROR",
+                        "Bar Date": "",
+                        "Close": "",
+                        "Error": str(exc),
+                    }
+                )
+        watch_df = pd.DataFrame(watch_rows)
+        st.dataframe(watch_df, hide_index=True, width="stretch")
+
+        to_remove = st.multiselect("Remove from watchlist", watchlist, key="watchlist_remove_select")
+        if st.button("Remove Selected", key="watchlist_remove_btn"):
+            remove_from_watchlist(to_remove)
+            st.success(f"Removed {len(to_remove)} symbol(s) from watchlist.")
 st.caption("Educational research tool only. Data may be delayed.")

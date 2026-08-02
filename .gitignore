@@ -9,3 +9,4 @@ __pycache__/
 .DS_Store
 *.zip
 signal_email_preview.html
+signal_reports/

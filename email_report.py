@@ -18,11 +18,89 @@ from src.scanner import scan_symbols
 
 
 EASTERN = ZoneInfo("America/New_York")
+STATE_FILE = Path("data/email_signal_state.csv")
 
 EMAIL_SIGNALS = {
     "BREAKOUT BUY",
     "WATCH",
 }
+
+
+def snapshot_signals(
+    filtered: pd.DataFrame,
+    timeframe: str,
+) -> pd.DataFrame:
+    if filtered.empty:
+        return pd.DataFrame(
+            columns=[
+                "Timeframe",
+                "Symbol",
+                "Signal",
+                "Bar Date",
+            ]
+        )
+
+    snap = filtered[["Symbol", "Signal", "Bar Date"]].copy()
+    snap["Timeframe"] = timeframe
+    snap["Symbol"] = snap["Symbol"].astype(str)
+    snap["Signal"] = snap["Signal"].astype(str)
+    snap["Bar Date"] = snap["Bar Date"].astype(str)
+    return snap[["Timeframe", "Symbol", "Signal", "Bar Date"]]
+
+
+def load_previous_state() -> pd.DataFrame:
+    if not STATE_FILE.exists():
+        return pd.DataFrame(
+            columns=[
+                "Timeframe",
+                "Symbol",
+                "Signal",
+                "Bar Date",
+            ]
+        )
+    previous = pd.read_csv(STATE_FILE)
+    expected = {"Timeframe", "Symbol", "Signal", "Bar Date"}
+    if not expected.issubset(previous.columns):
+        return pd.DataFrame(
+            columns=[
+                "Timeframe",
+                "Symbol",
+                "Signal",
+                "Bar Date",
+            ]
+        )
+    return previous[list(expected)].astype(str)
+
+
+def detect_signal_changes(
+    current_state: pd.DataFrame,
+    previous_state: pd.DataFrame,
+) -> pd.DataFrame:
+    if current_state.empty:
+        return current_state
+    if previous_state.empty:
+        return current_state
+
+    merged = current_state.merge(
+        previous_state,
+        on=["Timeframe", "Symbol"],
+        how="left",
+        suffixes=("", "_prev"),
+    )
+    changed = merged[
+        (merged["Signal_prev"].isna())
+        | (merged["Signal"] != merged["Signal_prev"])
+        | (merged["Bar Date"] != merged["Bar Date_prev"])
+    ]
+    return changed[["Timeframe", "Symbol", "Signal", "Bar Date"]].copy()
+
+
+def persist_state(current_state: pd.DataFrame) -> None:
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    current_state.drop_duplicates(
+        subset=["Timeframe", "Symbol"],
+        keep="last",
+    ).to_csv(STATE_FILE, index=False)
 
 
 def should_send_email_report(
@@ -253,7 +331,9 @@ def create_html_table(
     """
 
 
-def build_email_report(limit: int | None = None) -> tuple[str, datetime, list[tuple[str, str, bytes]], bool]:
+def build_email_report(
+    limit: int | None = None,
+) -> tuple[str, datetime, list[tuple[str, str, bytes]], bool, pd.DataFrame]:
     symbols = load_symbols()
 
     daily_results = scan_symbols(
@@ -281,11 +361,43 @@ def build_email_report(limit: int | None = None) -> tuple[str, datetime, list[tu
     daily_filtered = filter_email_signals(daily_results)
     weekly_filtered = filter_email_signals(weekly_results)
 
+    current_state = pd.concat(
+        [
+            snapshot_signals(daily_filtered, "Daily"),
+            snapshot_signals(weekly_filtered, "Weekly"),
+        ],
+        ignore_index=True,
+    )
+    previous_state = load_previous_state()
+    changed_state = detect_signal_changes(current_state, previous_state)
+
+    daily_changed_symbols = set(
+        changed_state.loc[
+            changed_state["Timeframe"] == "Daily",
+            "Symbol",
+        ].astype(str)
+    )
+    weekly_changed_symbols = set(
+        changed_state.loc[
+            changed_state["Timeframe"] == "Weekly",
+            "Symbol",
+        ].astype(str)
+    )
+
+    daily_changes = daily_filtered[
+        daily_filtered["Symbol"].astype(str).isin(daily_changed_symbols)
+    ].copy()
+    weekly_changes = weekly_filtered[
+        weekly_filtered["Symbol"].astype(str).isin(weekly_changed_symbols)
+    ].copy()
+
     daily_csv = daily_filtered.to_csv(index=False).encode("utf-8")
     weekly_csv = weekly_filtered.to_csv(index=False).encode("utf-8")
 
     daily_count = len(daily_filtered)
     weekly_count = len(weekly_filtered)
+    daily_changed_count = len(daily_changes)
+    weekly_changed_count = len(weekly_changes)
     should_send = should_send_email_report(
         daily_count,
         weekly_count,
@@ -294,6 +406,8 @@ def build_email_report(limit: int | None = None) -> tuple[str, datetime, list[tu
     print(
         "Email summary counts: "
         f"daily={daily_count}, weekly={weekly_count}, "
+        "changed_daily="
+        f"{daily_changed_count}, changed_weekly={weekly_changed_count}, "
         f"should_send={should_send}."
     )
 
@@ -329,6 +443,12 @@ def build_email_report(limit: int | None = None) -> tuple[str, datetime, list[tu
             </p>
 
             <p>
+                Signal changes since previous run:
+                Daily: <strong>{daily_changed_count}</strong>,
+                Weekly: <strong>{weekly_changed_count}</strong>.
+            </p>
+
+            <p>
                 Filter: <strong>BREAKOUT BUY</strong> or <strong>WATCH</strong>
                 with close above both <strong>EMA20</strong> and <strong>EMA30</strong>.
             </p>
@@ -345,9 +465,19 @@ def build_email_report(limit: int | None = None) -> tuple[str, datetime, list[tu
     attachments = [
         ("daily_signals.csv", "text/csv", daily_csv),
         ("weekly_signals.csv", "text/csv", weekly_csv),
+        (
+            "daily_signal_changes.csv",
+            "text/csv",
+            daily_changes.to_csv(index=False).encode("utf-8"),
+        ),
+        (
+            "weekly_signal_changes.csv",
+            "text/csv",
+            weekly_changes.to_csv(index=False).encode("utf-8"),
+        ),
     ]
 
-    return email_body, current_time_et, attachments, should_send
+    return email_body, current_time_et, attachments, should_send, current_state
 
 
 def save_report_preview(
@@ -548,7 +678,7 @@ def main() -> None:
         return
 
     try:
-        html_body, generated_time, attachments, should_send = build_email_report(limit=20)
+        html_body, generated_time, attachments, should_send, current_state = build_email_report(limit=20)
 
         if not should_send and not args.preview:
             print(
@@ -594,6 +724,8 @@ def main() -> None:
             html_body=html_body,
             attachments=attachments,
         )
+
+        persist_state(current_state)
 
         log_status(
             "sent",
