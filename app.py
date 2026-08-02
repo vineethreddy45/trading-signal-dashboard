@@ -1,4 +1,6 @@
 from pathlib import Path
+import html as html_lib
+from urllib.parse import quote_plus
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -211,49 +213,153 @@ def load_history(symbol, period):
     return download_history(symbol, period)
 
 
+def apply_symbol_from_query(symbols_df: pd.DataFrame) -> None:
+    query_symbol = st.query_params.get("symbol")
+    if not query_symbol:
+        return
+
+    symbol = str(query_symbol).strip().upper()
+    match = symbols_df[symbols_df["symbol"].astype(str).str.upper() == symbol]
+    if match.empty:
+        st.query_params.clear()
+        return
+
+    st.session_state["selected_symbol"] = symbol
+    market_value = str(match.iloc[0]["market"])
+    for label, value in MARKET_LABELS.items():
+        if value == market_value:
+            st.session_state["market_selector"] = label
+            break
+    st.query_params.clear()
+
+
+def render_scanner_table(rows: pd.DataFrame, selected_market: str) -> None:
+    table = [
+        '<table style="width:100%; border-collapse:collapse;">',
+        (
+            "<thead><tr>"
+            "<th style='text-align:left;padding:8px;'>Company Name</th>"
+            "<th style='text-align:left;padding:8px;'>Ticker</th>"
+            "<th style='text-align:left;padding:8px;'>Market</th>"
+            "<th style='text-align:left;padding:8px;'>Market Cap</th>"
+            "<th style='text-align:left;padding:8px;'>Cap Tier</th>"
+            "<th style='text-align:left;padding:8px;'>Signal</th>"
+            "<th style='text-align:left;padding:8px;'>Bar Date</th>"
+            "<th style='text-align:left;padding:8px;'>Yahoo</th>"
+            "<th style='text-align:left;padding:8px;'>TradingView</th>"
+            "</tr></thead><tbody>"
+        ),
+    ]
+
+    for _, row in rows.iterrows():
+        ticker = str(row["Ticker"]).strip()
+        name = html_lib.escape(str(row["Company Name"]))
+        market = html_lib.escape(str(row["Market"]))
+        market_cap = html_lib.escape(str(row["Market Cap"]))
+        cap_tier = html_lib.escape(str(row["Cap Tier"]))
+        signal = html_lib.escape(str(row["Signal"]))
+        bar_date = html_lib.escape(str(row["Bar Date"]))
+        symbol_link = f"?symbol={quote_plus(ticker)}&market={quote_plus(selected_market)}"
+        yahoo_link = html_lib.escape(str(row["Yahoo"]))
+        tradingview_link = html_lib.escape(str(row["TradingView"]))
+
+        table.append(
+            (
+                "<tr>"
+                f"<td style='padding:8px;'><a href='{symbol_link}' target='_self'>{name}</a></td>"
+                f"<td style='padding:8px;'>{html_lib.escape(ticker)}</td>"
+                f"<td style='padding:8px;'>{market}</td>"
+                f"<td style='padding:8px;'>{market_cap}</td>"
+                f"<td style='padding:8px;'>{cap_tier}</td>"
+                f"<td style='padding:8px;'>{signal}</td>"
+                f"<td style='padding:8px;'>{bar_date}</td>"
+                f"<td style='padding:8px;'><a href='{yahoo_link}' target='_blank' rel='noopener noreferrer'>Open</a></td>"
+                f"<td style='padding:8px;'><a href='{tradingview_link}' target='_blank' rel='noopener noreferrer'>Chart</a></td>"
+                "</tr>"
+            )
+        )
+
+    table.append("</tbody></table>")
+    st.markdown("".join(table), unsafe_allow_html=True)
+
+
 symbols = load_symbols()
+if "_defaults_initialized" not in st.session_state:
+    st.session_state["market_selector"] = None
+    st.session_state["symbol_selector"] = None
+    st.session_state["timeframe_selector"] = None
+    st.session_state["_defaults_initialized"] = True
+apply_symbol_from_query(symbols)
+
 with st.sidebar:
     st.header("Quick setup")
-    market = st.selectbox("Market", list(MARKET_LABELS.keys()), index=1)
-    market_value = MARKET_LABELS[market]
-    market_df = symbols[symbols.market == market_value]
+    market = st.selectbox(
+        "Market",
+        list(MARKET_LABELS.keys()),
+        key="market_selector",
+        index=None,
+        placeholder="Select market",
+    )
 
+    symbol = None
     search_query = st.text_input("Search symbol", value="")
-    if search_query:
-        filtered_df = market_df[
-            market_df["display_symbol"].str.contains(search_query, case=False, na=False)
-            | market_df["symbol"].str.contains(search_query, case=False, na=False)
-        ]
-    else:
-        filtered_df = market_df
+    if market:
+        market_value = MARKET_LABELS[market]
+        market_df = symbols[symbols.market == market_value]
 
-    if filtered_df.empty:
-        st.warning("No matching symbol found. Try a different search term.")
-        st.stop()
-
-    display_options = filtered_df.display_symbol.tolist()
-    selected_symbol_state = st.session_state.get("selected_symbol")
-    if selected_symbol_state is not None:
-        current_match = filtered_df[filtered_df["symbol"].astype(str).str.upper() == str(selected_symbol_state).upper()]
-        if not current_match.empty:
-            default_display = current_match.iloc[0]["display_symbol"]
+        if search_query:
+            filtered_df = market_df[
+                market_df["display_symbol"].str.contains(search_query, case=False, na=False)
+                | market_df["symbol"].str.contains(search_query, case=False, na=False)
+            ]
         else:
-            default_display = display_options[0]
+            filtered_df = market_df
+
+        if filtered_df.empty:
+            st.warning("No matching symbol found. Try a different search term.")
+        else:
+            display_options = filtered_df.display_symbol.tolist()
+            selected_symbol_state = st.session_state.get("selected_symbol")
+            symbol_index = None
+            if selected_symbol_state is not None:
+                current_match = filtered_df[
+                    filtered_df["symbol"].astype(str).str.upper() == str(selected_symbol_state).upper()
+                ]
+                if not current_match.empty:
+                    default_display = current_match.iloc[0]["display_symbol"]
+                    symbol_index = display_options.index(default_display)
+
+            display = st.selectbox(
+                "Symbol",
+                display_options,
+                index=symbol_index,
+                key="symbol_selector",
+                placeholder="Select symbol",
+            )
+            if display:
+                symbol = filtered_df.loc[filtered_df.display_symbol == display, "symbol"].iloc[0]
+                st.session_state["selected_symbol"] = symbol
     else:
-        default_display = display_options[0]
-    display = st.selectbox("Symbol", display_options, index=display_options.index(default_display), key="symbol_selector")
-    symbol = filtered_df.loc[filtered_df.display_symbol == display, "symbol"].iloc[0]
-    st.session_state["selected_symbol"] = symbol
-    timeframe = st.radio("Timeframe", ["Daily", "Weekly"], horizontal=True)
-    period = st.selectbox("History", ["1y", "3y", "5y", "max"], index=1)
+        st.selectbox("Symbol", [], index=None, key="symbol_selector", placeholder="Select market first")
+
+    timeframe = st.radio(
+        "Timeframe",
+        ["Daily", "Weekly"],
+        horizontal=True,
+        index=None,
+        key="timeframe_selector",
+    )
+    period = st.selectbox("History", ["1y", "3y", "5y", "max"], index=0)
     capital = st.number_input("Capital", min_value=1000.0, value=1_000_000.0 if market=="India" else 10_000.0, step=1000.0)
-    risk_pct = st.slider("Risk per trade (%)", 0.25, 2.0, 1.0, 0.25)
-    target_r = st.slider("Target R", 1.0, 5.0, 2.0, 0.5)
-    stop_lookback = st.slider("Stop lookback", 1, 10, 2 if timeframe=="Weekly" else 5)
     st.caption("Market cap guide: Mega Cap = $200B+, Large Cap = $10B-$200B, Mid Cap = $2B-$10B.")
 
 
-cfg = StrategyConfig(timeframe=timeframe, capital=capital, risk_pct=risk_pct, target_r=target_r, stop_lookback=stop_lookback)
+if not market or not symbol or not timeframe:
+    st.info("Select Market, Symbol, and Timeframe from the sidebar to load the dashboard.")
+    st.stop()
+
+
+cfg = StrategyConfig(timeframe=timeframe, capital=capital)
 try:
     daily = load_history(symbol, period)
     bars = convert_timeframe(daily, timeframe)
@@ -265,7 +371,7 @@ except Exception as exc:
     st.stop()
 
 
-t1,t2,t3,t4 = st.tabs(["Overview","Chart","Backtest","Signal Scanner"])
+t1, t3, t4 = st.tabs(["Overview", "Backtest", "Signal Scanner"])
 with t1:
     try:
         live, quote_time = latest_price(symbol)
@@ -297,22 +403,11 @@ with t1:
     st.dataframe(pd.DataFrame({"Condition":["Close above EMA20","Close above EMA30","EMA20 above EMA30","Volume above average"],
                                "Result":[signal["above_ema20"],signal["above_ema30"],signal["ema_stack"],signal["volume_confirm"]]}), hide_index=True, width="stretch")
     st.caption(f"Signal bar: {signal['bar_date']} | Quote: {quote_time}")
-with t2:
-    fig = go.Figure()
-    fig.add_trace(go.Candlestick(x=chart_data.index,open=chart_data.Open,high=chart_data.High,low=chart_data.Low,close=chart_data.Close,name=display))
-    fig.add_trace(go.Scatter(x=chart_data.index,y=chart_data.EMA20,name="EMA20"))
-    fig.add_trace(go.Scatter(x=chart_data.index,y=chart_data.EMA30,name="EMA30"))
-    br, pb = chart_data[chart_data.BREAKOUT_BUY], chart_data[chart_data.PULLBACK_BUY]
-    fig.add_trace(go.Scatter(x=br.index,y=br.Low,mode="markers",marker={"symbol":"triangle-up","size":11},name="Breakout Buy"))
-    fig.add_trace(go.Scatter(x=pb.index,y=pb.Low,mode="markers",marker={"symbol":"circle","size":8},name="Pullback Buy"))
-    fig.update_layout(height=650,xaxis_rangeslider_visible=False)
-    st.plotly_chart(fig, width="stretch")
 with t3:
     c=st.columns(5)
     c[0].metric("Trades",metrics["trades"]); c[1].metric("Win Rate",f"{metrics['win_rate']:.1f}%")
     c[2].metric("Return",f"{metrics['return_pct']:.1f}%"); c[3].metric("Net Profit",f"{metrics['net_profit']:,.2f}")
     c[4].metric("Max Drawdown",f"{metrics['max_drawdown_pct']:.1f}%")
-    if not equity.empty: st.line_chart(equity.Equity)
     if not trades.empty: st.dataframe(trades, width="stretch")
 with t4:
     st.subheader("Signal scanner")
@@ -391,21 +486,6 @@ with t4:
                             display_df = display_df.sort_values(["Market Cap Value", "Signal"], ascending=[False, True], na_position="last").copy()
                         display_df = display_df.reset_index(drop=True)
                         view_df = display_df[["Company Name", "Ticker", "Market", "Market Cap", "Cap Tier", "Signal", "Bar Date", "Yahoo", "TradingView"]].copy()
-                        st.dataframe(
-                            view_df,
-                            hide_index=True,
-                            width="stretch",
-                            column_config={
-                                "Company Name": st.column_config.TextColumn("Company Name"),
-                                "Ticker": st.column_config.TextColumn("Ticker"),
-                                "Market": st.column_config.TextColumn("Market"),
-                                "Market Cap": st.column_config.TextColumn("Market Cap"),
-                                "Cap Tier": st.column_config.TextColumn("Cap Tier"),
-                                "Signal": st.column_config.TextColumn("Signal"),
-                                "Bar Date": st.column_config.TextColumn("Bar Date"),
-                                "Yahoo": st.column_config.LinkColumn("Yahoo", display_text="Open"),
-                                "TradingView": st.column_config.LinkColumn("TradingView", display_text="Chart"),
-                            },
-                        )
+                        render_scanner_table(view_df, scan_market)
                         st.download_button("Download CSV", filtered.to_csv(index=False).encode(), file_name=f"{scan_market}_{scan_tf}_{scan_market_cap.lower().replace(' ', '_')}_signals.csv")
 st.caption("Educational research tool only. Data may be delayed.")
