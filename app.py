@@ -285,6 +285,8 @@ def render_scanner_table(rows: pd.DataFrame, selected_market: str) -> None:
             "<th style='text-align:left;padding:8px;'>Company Name</th>"
             "<th style='text-align:left;padding:8px;'>Ticker</th>"
             "<th style='text-align:left;padding:8px;'>Market</th>"
+            "<th style='text-align:left;padding:8px;'>Sector</th>"
+            "<th style='text-align:left;padding:8px;'>Industry</th>"
             "<th style='text-align:left;padding:8px;'>Market Cap</th>"
             "<th style='text-align:left;padding:8px;'>Cap Tier</th>"
             "<th style='text-align:left;padding:8px;'>Signal</th>"
@@ -302,6 +304,8 @@ def render_scanner_table(rows: pd.DataFrame, selected_market: str) -> None:
         ticker = str(row["Ticker"]).strip()
         name = html_lib.escape(str(row["Company Name"]))
         market = html_lib.escape(str(row["Market"]))
+        sector = html_lib.escape(str(row.get("Sector", "Unknown")))
+        industry = html_lib.escape(str(row.get("Industry", "Unknown")))
         market_cap = html_lib.escape(str(row["Market Cap"]))
         cap_tier = html_lib.escape(str(row["Cap Tier"]))
         signal = html_lib.escape(str(row["Signal"]))
@@ -319,6 +323,8 @@ def render_scanner_table(rows: pd.DataFrame, selected_market: str) -> None:
                 f"<td style='padding:8px;'><a href='{symbol_link}' target='_self'>{name}</a></td>"
                 f"<td style='padding:8px;'>{html_lib.escape(ticker)}</td>"
                 f"<td style='padding:8px;'>{market}</td>"
+                f"<td style='padding:8px;'>{sector}</td>"
+                f"<td style='padding:8px;'>{industry}</td>"
                 f"<td style='padding:8px;'>{market_cap}</td>"
                 f"<td style='padding:8px;'>{cap_tier}</td>"
                 f"<td style='padding:8px;'>{signal}</td>"
@@ -537,6 +543,21 @@ with t4:
 
         filtered = st.session_state.get("scanner_last_result", pd.DataFrame()).copy()
         failed = st.session_state.get("scanner_last_failed", pd.DataFrame()).copy()
+
+        sector_selection = []
+        industry_selection = []
+        if not filtered.empty:
+            filter_cols = st.columns(2)
+            available_sectors = sorted([s for s in filtered.get("Sector", pd.Series(dtype=str)).dropna().astype(str).unique() if s])
+            available_industries = sorted([s for s in filtered.get("Industry", pd.Series(dtype=str)).dropna().astype(str).unique() if s])
+            sector_selection = filter_cols[0].multiselect("Filter Sector", available_sectors, default=[])
+            industry_selection = filter_cols[1].multiselect("Filter Industry", available_industries, default=[])
+
+            if sector_selection:
+                filtered = filtered[filtered["Sector"].isin(sector_selection)]
+            if industry_selection:
+                filtered = filtered[filtered["Industry"].isin(industry_selection)]
+
         total_filtered = len(filtered)
         st.markdown(f"**Results:** {total_filtered} matching symbol{'s' if total_filtered != 1 else ''}")
         if not failed.empty:
@@ -626,6 +647,8 @@ with t4:
                 "Company Name",
                 "Ticker",
                 "Market",
+                "Sector",
+                "Industry",
                 "Market Cap",
                 "Cap Tier",
                 "Signal",

@@ -29,14 +29,18 @@ def market_cap_bucket(market_cap: float | int | None) -> str:
     return "Small Cap"
 
 
-def get_market_cap(symbol: str) -> float | None:
+def get_ticker_profile(symbol: str) -> tuple[float | None, str, str]:
     ticker = yf.Ticker(symbol)
     info = getattr(ticker, "info", {}) or {}
+
     market_cap = info.get("marketCap")
     if market_cap is None:
         fast = getattr(ticker, "fast_info", {}) or {}
         market_cap = fast.get("market_cap")
-    return float(market_cap) if market_cap is not None else None
+
+    sector = str(info.get("sector") or "Unknown").strip() or "Unknown"
+    industry = str(info.get("industry") or "Unknown").strip() or "Unknown"
+    return (float(market_cap) if market_cap is not None else None, sector, industry)
 
 
 def format_market_cap(value: float | int | None) -> str:
@@ -95,12 +99,14 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
             signal = latest_signal(bars, cfg)
             row = enriched_bars.iloc[-1]
             score, trend_score, volume_ratio, dist_ema20_pct = setup_score_components(row, signal["signal"])
-            market_cap = get_market_cap(quote_symbol)
+            market_cap, sector, industry = get_ticker_profile(quote_symbol)
             bucket = market_cap_bucket(market_cap)
             rows.append({
                 "Symbol": display_symbol,
                 "Quote Symbol": quote_symbol,
                 "Market": item.market,
+                "Sector": sector,
+                "Industry": industry,
                 "Market Cap": format_market_cap(market_cap),
                 "Market Cap Value": market_cap,
                 "Market Cap Bucket": bucket,
@@ -124,6 +130,8 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
                 "Symbol": str(item.display_symbol).strip().upper(),
                 "Quote Symbol": str(item.symbol).strip().upper(),
                 "Market": item.market,
+                "Sector": "Unknown",
+                "Industry": "Unknown",
                 "Market Cap": "N/A",
                 "Market Cap Value": None,
                 "Market Cap Bucket": "Unknown",
