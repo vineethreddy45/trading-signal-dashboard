@@ -288,6 +288,9 @@ def render_scanner_table(rows: pd.DataFrame, selected_market: str) -> None:
             "<th style='text-align:left;padding:8px;'>Market Cap</th>"
             "<th style='text-align:left;padding:8px;'>Cap Tier</th>"
             "<th style='text-align:left;padding:8px;'>Signal</th>"
+            "<th style='text-align:left;padding:8px;'>Setup Score</th>"
+            "<th style='text-align:left;padding:8px;'>Trend</th>"
+            "<th style='text-align:left;padding:8px;'>Vol Ratio</th>"
             "<th style='text-align:left;padding:8px;'>Bar Date</th>"
             "<th style='text-align:left;padding:8px;'>Yahoo</th>"
             "<th style='text-align:left;padding:8px;'>TradingView</th>"
@@ -302,6 +305,9 @@ def render_scanner_table(rows: pd.DataFrame, selected_market: str) -> None:
         market_cap = html_lib.escape(str(row["Market Cap"]))
         cap_tier = html_lib.escape(str(row["Cap Tier"]))
         signal = html_lib.escape(str(row["Signal"]))
+        setup_score = float(row.get("Setup Score", 0.0) or 0.0)
+        trend_score = float(row.get("Trend Score", 0.0) or 0.0)
+        volume_ratio = float(row.get("Volume Ratio", 0.0) or 0.0)
         bar_date = html_lib.escape(str(row["Bar Date"]))
         symbol_link = f"?symbol={quote_plus(ticker)}&market={quote_plus(selected_market)}"
         yahoo_link = html_lib.escape(str(row["Yahoo"]))
@@ -316,6 +322,9 @@ def render_scanner_table(rows: pd.DataFrame, selected_market: str) -> None:
                 f"<td style='padding:8px;'>{market_cap}</td>"
                 f"<td style='padding:8px;'>{cap_tier}</td>"
                 f"<td style='padding:8px;'>{signal}</td>"
+                f"<td style='padding:8px;'>{setup_score:.1f}</td>"
+                f"<td style='padding:8px;'>{trend_score:.0f}/5</td>"
+                f"<td style='padding:8px;'>{volume_ratio:.2f}x</td>"
                 f"<td style='padding:8px;'>{bar_date}</td>"
                 f"<td style='padding:8px;'><a href='{yahoo_link}' target='_blank' rel='noopener noreferrer'>Open</a></td>"
                 f"<td style='padding:8px;'><a href='{tradingview_link}' target='_blank' rel='noopener noreferrer'>Chart</a></td>"
@@ -397,6 +406,9 @@ with st.sidebar:
     )
     period = st.selectbox("History", ["1y", "3y", "5y", "max"], index=0)
     capital = st.number_input("Capital", min_value=1000.0, value=1_000_000.0 if market=="India" else 10_000.0, step=1000.0)
+    c1, c2 = st.columns(2)
+    commission_pct = c1.number_input("Commission %", min_value=0.0, max_value=2.0, value=0.05, step=0.01)
+    slippage_pct = c2.number_input("Slippage %", min_value=0.0, max_value=2.0, value=0.05, step=0.01)
     st.caption("Market cap guide: Mega Cap = $200B+, Large Cap = $10B-$200B, Mid Cap = $2B-$10B.")
 
 
@@ -405,7 +417,12 @@ if not market or not symbol or not timeframe:
     st.stop()
 
 
-cfg = StrategyConfig(timeframe=timeframe, capital=capital)
+cfg = StrategyConfig(
+    timeframe=timeframe,
+    capital=capital,
+    commission_pct=float(commission_pct),
+    slippage_pct=float(slippage_pct),
+)
 try:
     daily = load_history(symbol, period)
     bars = convert_timeframe(daily, timeframe)
@@ -450,10 +467,11 @@ with t1:
                                "Result":[signal["above_ema20"],signal["above_ema30"],signal["ema_stack"],signal["volume_confirm"]]}), hide_index=True, width="stretch")
     st.caption(f"Signal bar: {signal['bar_date']} | Quote: {quote_time}")
 with t3:
-    c=st.columns(5)
+    c=st.columns(6)
     c[0].metric("Trades",metrics["trades"]); c[1].metric("Win Rate",f"{metrics['win_rate']:.1f}%")
     c[2].metric("Return",f"{metrics['return_pct']:.1f}%"); c[3].metric("Net Profit",f"{metrics['net_profit']:,.2f}")
     c[4].metric("Max Drawdown",f"{metrics['max_drawdown_pct']:.1f}%")
+    c[5].metric("Transaction Costs",f"{metrics.get('total_costs', 0.0):,.2f}")
     if not trades.empty: st.dataframe(trades, width="stretch")
 with t4:
     st.subheader("Signal scanner")
@@ -532,6 +550,8 @@ with t4:
             sort_order = st.selectbox(
                 "Sort results by",
                 [
+                    "Setup Score (High to Low)",
+                    "Setup Score (Low to High)",
                     "Market Cap (High to Low)",
                     "Market Cap (Low to High)",
                     "Signal (Best to Worst)",
@@ -563,6 +583,11 @@ with t4:
             display_df["Yahoo"] = "https://finance.yahoo.com/quote/" + display_df["Quote Symbol"]
             display_df["TradingView"] = "https://www.tradingview.com/symbols/" + display_df["Quote Symbol"] + "/"
 
+            display_df["Setup Score"] = pd.to_numeric(display_df.get("Setup Score"), errors="coerce").fillna(0.0)
+            display_df["Trend Score"] = pd.to_numeric(display_df.get("Trend Score"), errors="coerce").fillna(0.0)
+            display_df["Volume Ratio"] = pd.to_numeric(display_df.get("Volume Ratio"), errors="coerce").fillna(0.0)
+            display_df["Distance to EMA20 %"] = pd.to_numeric(display_df.get("Distance to EMA20 %"), errors="coerce").fillna(0.0)
+
             signal_rank = {
                 "BREAKOUT BUY": 1,
                 "PULLBACK BUY": 2,
@@ -574,7 +599,11 @@ with t4:
             display_df["_signal_rank"] = display_df["Signal"].map(signal_rank).fillna(99)
             display_df["_bar_date"] = pd.to_datetime(display_df["Bar Date"], errors="coerce")
 
-            if sort_order == "Market Cap (High to Low)" and "Market Cap Value" in display_df.columns:
+            if sort_order == "Setup Score (High to Low)":
+                display_df = display_df.sort_values(["Setup Score", "_signal_rank", "Market Cap Value"], ascending=[False, True, False], na_position="last")
+            elif sort_order == "Setup Score (Low to High)":
+                display_df = display_df.sort_values(["Setup Score", "_signal_rank", "Market Cap Value"], ascending=[True, True, False], na_position="last")
+            elif sort_order == "Market Cap (High to Low)" and "Market Cap Value" in display_df.columns:
                 display_df = display_df.sort_values(["Market Cap Value", "_signal_rank"], ascending=[False, True], na_position="last")
             elif sort_order == "Market Cap (Low to High)" and "Market Cap Value" in display_df.columns:
                 display_df = display_df.sort_values(["Market Cap Value", "_signal_rank"], ascending=[True, True], na_position="last")
@@ -593,7 +622,20 @@ with t4:
 
             display_df = display_df.drop(columns=["_signal_rank", "_bar_date"], errors="ignore")
             display_df = display_df.reset_index(drop=True)
-            view_df = display_df[["Company Name", "Ticker", "Market", "Market Cap", "Cap Tier", "Signal", "Bar Date", "Yahoo", "TradingView"]].copy()
+            view_df = display_df[[
+                "Company Name",
+                "Ticker",
+                "Market",
+                "Market Cap",
+                "Cap Tier",
+                "Signal",
+                "Setup Score",
+                "Trend Score",
+                "Volume Ratio",
+                "Bar Date",
+                "Yahoo",
+                "TradingView",
+            ]].copy()
             render_scanner_table(view_df, scan_market)
             st.download_button("Download CSV", display_df.to_csv(index=False).encode(), file_name=f"{scan_market}_{scan_tf}_{scan_market_cap.lower().replace(' ', '_')}_signals.csv")
 st.caption("Educational research tool only. Data may be delayed.")

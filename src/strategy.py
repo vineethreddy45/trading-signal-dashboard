@@ -97,30 +97,41 @@ def latest_signal(data: pd.DataFrame, cfg: StrategyConfig) -> dict:
 def backtest(data: pd.DataFrame, cfg: StrategyConfig):
     df = enrich(data, cfg)
     cash, position, trades, equity = cfg.capital, None, [], []
-    friction = (cfg.commission_pct + cfg.slippage_pct) / 100
+    commission_rate = cfg.commission_pct / 100
+    slippage_rate = cfg.slippage_pct / 100
+    total_costs = 0.0
     for i in range(1, len(df)):
         date, row, prev = df.index[i], df.iloc[i], df.iloc[i-1]
         if position is None and bool(prev["BREAKOUT_BUY"]):
-            entry, stop = float(row["Open"]) * (1 + friction), float(prev["STOP"])
+            entry, stop = float(row["Open"]) * (1 + slippage_rate), float(prev["STOP"])
             if np.isfinite(stop) and 0 < stop < entry:
                 risk_per_share = entry - stop
                 qty = min(int((cash * cfg.risk_pct / 100) // risk_per_share), int(cash // entry))
                 if qty > 0:
+                    entry_commission = entry * qty * commission_rate
+                    cash -= entry_commission
+                    total_costs += entry_commission
                     position = {"entry_date": date, "entry": entry, "stop": stop,
-                                "target": entry + cfg.target_r * risk_per_share, "quantity": qty}
+                                "target": entry + cfg.target_r * risk_per_share, "quantity": qty,
+                                "entry_commission": entry_commission}
         if position:
             exit_price, reason = None, None
             if row["Low"] <= position["stop"]:
-                exit_price, reason = position["stop"] * (1 - friction), "STOP"
+                exit_price, reason = position["stop"] * (1 - slippage_rate), "STOP"
             elif row["High"] >= position["target"]:
-                exit_price, reason = position["target"] * (1 - friction), "TARGET"
+                exit_price, reason = position["target"] * (1 - slippage_rate), "TARGET"
             elif row["Close"] < row["EMA30"]:
-                exit_price, reason = float(row["Close"]) * (1 - friction), "EMA30 EXIT"
+                exit_price, reason = float(row["Close"]) * (1 - slippage_rate), "EMA30 EXIT"
             if exit_price is not None:
-                pnl = (exit_price - position["entry"]) * position["quantity"]
-                cash += pnl
+                exit_commission = exit_price * position["quantity"] * commission_rate
+                gross_pnl = (exit_price - position["entry"]) * position["quantity"]
+                costs = float(position["entry_commission"]) + exit_commission
+                net_pnl = gross_pnl - exit_commission
+                cash += net_pnl
+                total_costs += exit_commission
                 trades.append({**position, "exit_date": date, "exit": exit_price,
-                               "reason": reason, "pnl": pnl,
+                               "reason": reason, "gross_pnl": gross_pnl, "costs": costs,
+                               "pnl": net_pnl,
                                "return_pct": (exit_price / position["entry"] - 1) * 100})
                 position = None
         marked = cash if not position else cash + (float(row["Close"]) - position["entry"]) * position["quantity"]
@@ -128,10 +139,22 @@ def backtest(data: pd.DataFrame, cfg: StrategyConfig):
     trades_df = pd.DataFrame(trades)
     equity_df = pd.DataFrame(equity).set_index("Date")
     if trades_df.empty:
-        metrics = {"trades": 0, "win_rate": 0.0, "return_pct": 0.0, "net_profit": 0.0, "max_drawdown_pct": 0.0}
+        metrics = {
+            "trades": 0,
+            "win_rate": 0.0,
+            "return_pct": 0.0,
+            "net_profit": 0.0,
+            "max_drawdown_pct": 0.0,
+            "total_costs": 0.0,
+        }
     else:
         dd = equity_df["Equity"] / equity_df["Equity"].cummax() - 1
-        metrics = {"trades": len(trades_df), "win_rate": float((trades_df["pnl"] > 0).mean() * 100),
-                   "return_pct": float((cash / cfg.capital - 1) * 100), "net_profit": float(cash - cfg.capital),
-                   "max_drawdown_pct": float(dd.min() * 100)}
+        metrics = {
+            "trades": len(trades_df),
+            "win_rate": float((trades_df["pnl"] > 0).mean() * 100),
+            "return_pct": float((cash / cfg.capital - 1) * 100),
+            "net_profit": float(cash - cfg.capital),
+            "max_drawdown_pct": float(dd.min() * 100),
+            "total_costs": float(total_costs),
+        }
     return trades_df, equity_df, metrics
