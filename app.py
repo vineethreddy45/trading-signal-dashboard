@@ -670,10 +670,22 @@ with t4:
             display_df["Yahoo"] = "https://finance.yahoo.com/quote/" + display_df["Quote Symbol"]
             display_df["TradingView"] = "https://www.tradingview.com/symbols/" + display_df["Quote Symbol"] + "/"
 
-            display_df["Setup Score"] = pd.to_numeric(display_df.get("Setup Score"), errors="coerce").fillna(0.0)
-            display_df["Trend Score"] = pd.to_numeric(display_df.get("Trend Score"), errors="coerce").fillna(0.0)
-            display_df["Volume Ratio"] = pd.to_numeric(display_df.get("Volume Ratio"), errors="coerce").fillna(0.0)
-            display_df["Distance to EMA20 %"] = pd.to_numeric(display_df.get("Distance to EMA20 %"), errors="coerce").fillna(0.0)
+            display_df["Setup Score"] = pd.to_numeric(
+                display_df.get("Setup Score", pd.Series(index=display_df.index, dtype=float)),
+                errors="coerce",
+            ).fillna(0.0)
+            display_df["Trend Score"] = pd.to_numeric(
+                display_df.get("Trend Score", pd.Series(index=display_df.index, dtype=float)),
+                errors="coerce",
+            ).fillna(0.0)
+            display_df["Volume Ratio"] = pd.to_numeric(
+                display_df.get("Volume Ratio", pd.Series(index=display_df.index, dtype=float)),
+                errors="coerce",
+            ).fillna(0.0)
+            display_df["Distance to EMA20 %"] = pd.to_numeric(
+                display_df.get("Distance to EMA20 %", pd.Series(index=display_df.index, dtype=float)),
+                errors="coerce",
+            ).fillna(0.0)
 
             signal_rank = {
                 "BREAKOUT BUY": 1,
