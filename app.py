@@ -652,6 +652,28 @@ with t4:
             )
 
             display_df = filtered.copy()
+            required_defaults = {
+                "Company Name": "Unknown",
+                "Ticker": "",
+                "Quote Symbol": "",
+                "Market": "Unknown",
+                "Sector": "Unknown",
+                "Industry": "Unknown",
+                "Market Cap": "N/A",
+                "Market Cap Value": 0.0,
+                "Market Cap Bucket": "Unknown",
+                "Cap Tier": "Unknown",
+                "Signal": "UNKNOWN",
+                "Bar Date": "",
+                "Setup Score": 0.0,
+                "Trend Score": 0.0,
+                "Volume Ratio": 0.0,
+                "Distance to EMA20 %": 0.0,
+            }
+            for col, default in required_defaults.items():
+                if col not in display_df.columns:
+                    display_df[col] = default
+
             if "Market Cap Value" in display_df.columns:
                 display_df["Market Cap"] = display_df["Market Cap Value"].apply(
                     lambda v: (
