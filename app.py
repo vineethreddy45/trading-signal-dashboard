@@ -11,6 +11,15 @@ import yfinance as yf
 from src.market_data import download_history, latest_price
 from src.scanner import scan_symbols
 from src.strategy import StrategyConfig, backtest, convert_timeframe, enrich, latest_signal
+from src.watchlist_store import (
+    add_symbols_to_watchlist,
+    create_watchlist,
+    delete_watchlist,
+    list_watchlist_names,
+    load_watchlists,
+    remove_symbol_from_watchlist,
+    save_watchlists,
+)
 
 st.set_page_config(page_title="Trading Signal Dashboard", layout="wide")
 
@@ -26,6 +35,58 @@ def process_memory_mb() -> float:
 
 def log_runtime_event(event: str):
     logger.info("%s | memory_mb=%.1f", event, process_memory_mb())
+
+
+def build_assistant_reply(
+    query: str,
+    scanner_df: pd.DataFrame,
+    watchlist_df: pd.DataFrame,
+    current_signal: dict,
+    metrics: dict,
+) -> str:
+    q = str(query).strip().lower()
+    if not q:
+        return "Ask about top setups, current signal status, watchlist summary, or backtest metrics."
+
+    if "top" in q and ("scanner" in q or "setup" in q or "symbols" in q):
+        if scanner_df.empty:
+            return "Scanner results are empty. Run scanner first, then ask for top setups."
+        top = scanner_df.sort_values("Setup Score", ascending=False).head(5)
+        rows = [
+            f"{r['Quote Symbol']} ({r['Signal']}) score {float(r.get('Setup Score', 0.0)):.1f}"
+            for _, r in top.iterrows()
+        ]
+        return "Top scanner setups:\n" + "\n".join(rows)
+
+    if "watchlist" in q:
+        if watchlist_df.empty:
+            return "Your selected watchlist is empty. Add symbols from the scanner tab."
+        sector_count = watchlist_df["Sector"].fillna("Unknown").value_counts().head(3)
+        sector_text = ", ".join([f"{name} ({count})" for name, count in sector_count.items()])
+        avg_score = pd.to_numeric(watchlist_df.get("Setup Score"), errors="coerce").fillna(0.0).mean()
+        return (
+            f"Watchlist has {len(watchlist_df)} symbols. "
+            f"Average setup score is {avg_score:.1f}. "
+            f"Top sectors: {sector_text}."
+        )
+
+    if "signal" in q or "current" in q:
+        return (
+            f"Current chart signal is {current_signal['signal']}. "
+            f"Close {current_signal['close']:.2f}, EMA20 {current_signal['ema20']:.2f}, "
+            f"EMA30 {current_signal['ema30']:.2f}, volume confirm={current_signal['volume_confirm']}."
+        )
+
+    if "backtest" in q or "return" in q:
+        return (
+            f"Backtest metrics: trades={metrics['trades']}, win rate={metrics['win_rate']:.1f}%, "
+            f"return={metrics['return_pct']:.1f}%, max drawdown={metrics['max_drawdown_pct']:.1f}%, "
+            f"transaction costs={metrics.get('total_costs', 0.0):,.2f}."
+        )
+
+    return (
+        "Try asking: 'top 5 scanner setups', 'watchlist summary', 'current signal', or 'backtest return'."
+    )
 
 st.markdown(
     """
@@ -347,6 +408,11 @@ if "_defaults_initialized" not in st.session_state:
     st.session_state["market_selector"] = None
     st.session_state["timeframe_selector"] = None
     st.session_state["_defaults_initialized"] = True
+if "watchlists" not in st.session_state:
+    st.session_state["watchlists"] = load_watchlists()
+if "watchlist_active_name" not in st.session_state:
+    names = list_watchlist_names(st.session_state["watchlists"])
+    st.session_state["watchlist_active_name"] = names[0] if names else "Default"
 apply_symbol_from_query(symbols)
 
 with st.sidebar:
@@ -440,7 +506,7 @@ except Exception as exc:
     st.stop()
 
 
-t1, t3, t4 = st.tabs(["Overview", "Backtest", "Signal Scanner"])
+t1, t3, t4, t5, t6 = st.tabs(["Overview", "Backtest", "Signal Scanner", "Watchlist", "Assistant"])
 with t1:
     try:
         live, quote_time = latest_price(symbol)
@@ -659,6 +725,153 @@ with t4:
                 "Yahoo",
                 "TradingView",
             ]].copy()
+            st.session_state["scanner_last_display"] = display_df.copy()
             render_scanner_table(view_df, scan_market)
+
+            watchlists = st.session_state["watchlists"]
+            watchlist_names = list_watchlist_names(watchlists)
+            top_limit = min(20, len(display_df))
+
+            wl_cols = st.columns([2, 2, 2, 1])
+            selected_watchlist = wl_cols[0].selectbox(
+                "Watchlist",
+                watchlist_names,
+                key="scanner_watchlist_target",
+            )
+            ticker_pick = wl_cols[1].selectbox(
+                "Ticker to add",
+                display_df["Quote Symbol"].astype(str).tolist(),
+                key="scanner_watchlist_ticker_pick",
+            )
+            top_n = wl_cols[2].slider("Top N", 1, top_limit, min(5, top_limit), key="scanner_watchlist_top_n")
+
+            if wl_cols[3].button("Add Ticker"):
+                selected_rows = display_df[display_df["Quote Symbol"] == ticker_pick].head(1).to_dict("records")
+                added = add_symbols_to_watchlist(watchlists, selected_watchlist, selected_rows)
+                save_watchlists(watchlists)
+                st.success(f"Added {added} symbol to watchlist '{selected_watchlist}'.")
+
+            if st.button("Add Top N to Watchlist"):
+                selected_rows = display_df.head(top_n).to_dict("records")
+                added = add_symbols_to_watchlist(watchlists, selected_watchlist, selected_rows)
+                save_watchlists(watchlists)
+                st.success(f"Added {added} symbols to watchlist '{selected_watchlist}'.")
+
             st.download_button("Download CSV", display_df.to_csv(index=False).encode(), file_name=f"{scan_market}_{scan_tf}_{scan_market_cap.lower().replace(' ', '_')}_signals.csv")
+
+with t5:
+    st.subheader("Watchlists")
+    watchlists = st.session_state["watchlists"]
+    watchlist_names = list_watchlist_names(watchlists)
+
+    manage_cols = st.columns([2, 2, 1, 1])
+    active_name = manage_cols[0].selectbox(
+        "Select watchlist",
+        watchlist_names,
+        index=watchlist_names.index(st.session_state.get("watchlist_active_name", watchlist_names[0])) if watchlist_names else 0,
+        key="watchlist_active_select",
+    )
+    st.session_state["watchlist_active_name"] = active_name
+
+    new_watchlist_name = manage_cols[1].text_input("Create watchlist", value="", placeholder="Example: US Swing")
+    if manage_cols[2].button("Create"):
+        if create_watchlist(watchlists, new_watchlist_name):
+            save_watchlists(watchlists)
+            st.success(f"Created watchlist '{new_watchlist_name.strip()}'.")
+        else:
+            st.warning("Enter a unique watchlist name.")
+
+    if manage_cols[3].button("Delete"):
+        if delete_watchlist(watchlists, active_name):
+            save_watchlists(watchlists)
+            st.success(f"Deleted watchlist '{active_name}'.")
+            names = list_watchlist_names(watchlists)
+            st.session_state["watchlist_active_name"] = names[0]
+            st.rerun()
+        else:
+            st.warning("Cannot delete the last remaining watchlist.")
+
+    active_rows = watchlists.get(active_name, [])
+    watch_df = pd.DataFrame(active_rows)
+
+    latest_scanner = st.session_state.get("scanner_last_display", pd.DataFrame()).copy()
+    if not watch_df.empty and not latest_scanner.empty:
+        latest_scanner = latest_scanner.drop_duplicates(subset=["Quote Symbol"], keep="first")
+        refresh_cols = ["Quote Symbol", "Signal", "Setup Score", "Bar Date", "Sector", "Industry", "Market"]
+        merge_df = latest_scanner[refresh_cols].copy()
+        watch_df = watch_df.drop(columns=[c for c in refresh_cols if c != "Quote Symbol" and c in watch_df.columns], errors="ignore")
+        watch_df = watch_df.merge(merge_df, on="Quote Symbol", how="left")
+        watch_df["Signal"] = watch_df["Signal"].fillna("Unknown")
+        watch_df["Setup Score"] = pd.to_numeric(watch_df["Setup Score"], errors="coerce").fillna(0.0)
+
+    if watch_df.empty:
+        st.info("This watchlist is empty. Add symbols from the scanner tab.")
+    else:
+        mcols = st.columns(4)
+        mcols[0].metric("Symbols", len(watch_df))
+        mcols[1].metric("Average Score", f"{watch_df['Setup Score'].astype(float).mean():.1f}")
+        mcols[2].metric("Breakout Buy", int((watch_df["Signal"] == "BREAKOUT BUY").sum()))
+        mcols[3].metric("Pullback Buy", int((watch_df["Signal"] == "PULLBACK BUY").sum()))
+
+        sector_summary = (
+            watch_df["Sector"]
+            .fillna("Unknown")
+            .value_counts()
+            .rename_axis("Sector")
+            .reset_index(name="Count")
+        )
+        with st.expander("Sector Distribution", expanded=False):
+            st.dataframe(sector_summary, hide_index=True, width="stretch")
+
+        remove_cols = st.columns([3, 1])
+        remove_symbol = remove_cols[0].selectbox("Remove symbol", watch_df["Quote Symbol"].astype(str).tolist(), key="watchlist_remove_pick")
+        if remove_cols[1].button("Remove"):
+            if remove_symbol_from_watchlist(watchlists, active_name, remove_symbol):
+                save_watchlists(watchlists)
+                st.success(f"Removed {remove_symbol} from '{active_name}'.")
+                st.rerun()
+
+        st.dataframe(watch_df, hide_index=True, width="stretch")
+        st.download_button(
+            "Export Watchlist CSV",
+            watch_df.to_csv(index=False).encode(),
+            file_name=f"{active_name.lower().replace(' ', '_')}_watchlist.csv",
+        )
+
+    upload_file = st.file_uploader("Import Watchlist CSV", type=["csv"], key="watchlist_import_csv")
+    if upload_file is not None:
+        import_df = pd.read_csv(upload_file)
+        if import_df.empty:
+            st.warning("Uploaded CSV is empty.")
+        else:
+            if "Quote Symbol" not in import_df.columns:
+                if "Ticker" in import_df.columns:
+                    import_df["Quote Symbol"] = import_df["Ticker"]
+                elif "Symbol" in import_df.columns:
+                    import_df["Quote Symbol"] = import_df["Symbol"]
+            if "Quote Symbol" not in import_df.columns:
+                st.error("CSV must include Quote Symbol, Ticker, or Symbol column.")
+            else:
+                added = add_symbols_to_watchlist(watchlists, active_name, import_df.to_dict("records"))
+                save_watchlists(watchlists)
+                st.success(f"Imported {added} symbols into '{active_name}'.")
+
+with t6:
+    st.subheader("Assistant")
+    st.caption("Ask for quick summaries from current scanner, watchlist, and backtest context.")
+    scanner_df = st.session_state.get("scanner_last_display", pd.DataFrame()).copy()
+    watchlists = st.session_state.get("watchlists", {})
+    active_name = st.session_state.get("watchlist_active_name", "Default")
+    watch_df = pd.DataFrame(watchlists.get(active_name, []))
+
+    question = st.text_input("Ask assistant", placeholder="Example: top 5 scanner setups")
+    if st.button("Ask"):
+        reply = build_assistant_reply(question, scanner_df, watch_df, signal, metrics)
+        st.info(reply)
+
+    st.markdown("**Suggested prompts**")
+    st.write("- top 5 scanner setups")
+    st.write("- watchlist summary")
+    st.write("- current signal")
+    st.write("- backtest return")
 st.caption("Educational research tool only. Data may be delayed.")
