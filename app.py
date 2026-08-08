@@ -306,6 +306,48 @@ def company_name_from_ticker(ticker: str) -> str:
         return ticker
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def search_yahoo_symbols(query: str, market_label: str, max_results: int = 12) -> pd.DataFrame:
+    cols = ["symbol", "name", "exchange"]
+    q = str(query).strip()
+    if not q:
+        return pd.DataFrame(columns=cols)
+
+    try:
+        search = yf.Search(q, max_results=max_results, news_count=0)
+        quotes = getattr(search, "quotes", []) or []
+    except Exception:
+        return pd.DataFrame(columns=cols)
+
+    rows = []
+    for item in quotes:
+        symbol = str(item.get("symbol") or "").strip().upper()
+        if not symbol:
+            continue
+        exchange = str(item.get("exchDisp") or item.get("exchange") or "").strip()
+        name = str(item.get("shortname") or item.get("longname") or symbol).strip()
+        quote_type = str(item.get("quoteType") or "").upper()
+        if quote_type and quote_type not in {"EQUITY", "ETF"}:
+            continue
+
+        if market_label == "US" and (symbol.endswith(".NS") or symbol.endswith(".BO")):
+            continue
+        if market_label == "India":
+            exchange_upper = exchange.upper()
+            is_india_symbol = symbol.endswith(".NS") or symbol.endswith(".BO")
+            is_india_exchange = ("NSE" in exchange_upper) or ("BSE" in exchange_upper) or (exchange_upper in {"NSI", "BOM"})
+            if not (is_india_symbol or is_india_exchange):
+                continue
+
+        rows.append({"symbol": symbol, "name": name, "exchange": exchange})
+
+    if not rows:
+        return pd.DataFrame(columns=cols)
+
+    out = pd.DataFrame(rows).drop_duplicates(subset=["symbol"]).reset_index(drop=True)
+    return out[cols]
+
+
 def quote_symbol_for_row(row: pd.Series) -> str:
     direct = str(row.get("Quote Symbol", "")).strip().upper()
     if direct:
@@ -430,6 +472,7 @@ with st.sidebar:
     )
 
     symbol = None
+    display = None
     search_query = st.text_input("Search symbol", value="")
     if market:
         market_value = MARKET_LABELS[market]
@@ -443,9 +486,7 @@ with st.sidebar:
         else:
             filtered_df = market_df
 
-        if filtered_df.empty:
-            st.warning("No matching symbol found. Try a different search term.")
-        else:
+        if not filtered_df.empty:
             display_options = filtered_df.display_symbol.tolist()
             selected_symbol_state = st.session_state.get("selected_symbol")
             current_display = st.session_state.get("symbol_selector")
@@ -470,6 +511,27 @@ with st.sidebar:
             if display:
                 symbol = filtered_df.loc[filtered_df.display_symbol == display, "symbol"].iloc[0]
                 st.session_state["selected_symbol"] = symbol
+        elif search_query:
+            yahoo_matches = search_yahoo_symbols(search_query, market)
+            if yahoo_matches.empty:
+                st.warning("No matching symbol found locally or on Yahoo.")
+            else:
+                yahoo_labels = (
+                    yahoo_matches["symbol"].astype(str)
+                    + " - "
+                    + yahoo_matches["name"].astype(str)
+                    + " ("
+                    + yahoo_matches["exchange"].astype(str)
+                    + ")"
+                ).tolist()
+                yahoo_pick = st.selectbox("Yahoo Symbol", yahoo_labels, key="yahoo_symbol_selector")
+                yahoo_row = yahoo_matches.iloc[yahoo_labels.index(yahoo_pick)]
+                symbol = str(yahoo_row["symbol"]).strip().upper()
+                display = symbol
+                st.session_state["selected_symbol"] = symbol
+                st.caption("Using Yahoo fallback symbol from search.")
+        else:
+            st.warning("No matching symbol found. Try a different search term.")
     else:
         st.selectbox("Symbol", [], index=None, key="symbol_selector", placeholder="Select market first")
 
@@ -491,6 +553,9 @@ with st.sidebar:
 if not market or not symbol or not timeframe:
     st.info("Select Market, Symbol, and Timeframe from the sidebar to load the dashboard.")
     st.stop()
+
+if not display:
+    display = str(symbol).strip().upper()
 
 
 cfg = StrategyConfig(
