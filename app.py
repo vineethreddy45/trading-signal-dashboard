@@ -556,6 +556,72 @@ def render_scanner_table(rows: pd.DataFrame, selected_market: str) -> None:
     st.markdown("".join(table), unsafe_allow_html=True)
 
 
+def setup_score_band(score: float) -> tuple[str, str]:
+    if score >= 80:
+        return "High", "#22c55e"
+    if score >= 60:
+        return "Medium", "#0ea5e9"
+    return "Low", "#f59e0b"
+
+
+def render_scanner_cards(rows: pd.DataFrame, selected_market: str, limit: int = 12) -> None:
+    if rows.empty:
+        st.info("No results to show in card view.")
+        return
+
+    data = rows.head(limit).reset_index(drop=True)
+    cols = st.columns(2)
+    for idx, row in data.iterrows():
+        col = cols[idx % 2]
+        ticker = str(row.get("Ticker") or row.get("Quote Symbol") or "").strip()
+        company = html_lib.escape(str(row.get("Company Name") or ticker))
+        signal = str(row.get("Signal") or "Unknown")
+        score = float(row.get("Setup Score") or 0.0)
+        score_band, score_color = setup_score_band(score)
+        sector = html_lib.escape(str(row.get("Sector") or "Unknown"))
+        industry = html_lib.escape(str(row.get("Industry") or "Unknown"))
+        symbol_link = f"?symbol={quote_plus(ticker)}&market={quote_plus(selected_market)}"
+        yahoo_link = html_lib.escape(str(row.get("Yahoo") or ""))
+
+        with col:
+            st.markdown(
+                (
+                    "<div style='background:rgba(15,23,42,0.72);border:1px solid rgba(148,163,184,0.18);"
+                    "border-radius:14px;padding:0.85rem;margin-bottom:0.75rem;'>"
+                    f"<div style='display:flex;justify-content:space-between;gap:0.5rem;align-items:center;'>"
+                    f"<a href='{symbol_link}' target='_self' style='color:#e8edf8;text-decoration:none;font-weight:700;'>{company}</a>"
+                    f"<span style='font-size:0.72rem;padding:3px 8px;border-radius:999px;background:{score_color};color:white;'>{score_band}</span>"
+                    "</div>"
+                    f"<div style='margin-top:0.35rem;font-size:0.82rem;color:#cbd5e1;'>"
+                    f"{html_lib.escape(ticker)} • {html_lib.escape(str(row.get('Market') or 'Unknown'))}</div>"
+                    f"<div style='margin-top:0.35rem;'><span class='signal-pill {signal_style.get(signal, 'neutral')}'>{html_lib.escape(signal)}</span></div>"
+                    f"<div style='margin-top:0.5rem;font-size:0.8rem;color:#cbd5e1;'>Score {score:.1f} • Sector: {sector} • Industry: {industry}</div>"
+                    f"<div style='margin-top:0.45rem;font-size:0.78rem;'><a href='{yahoo_link}' target='_blank' rel='noopener noreferrer'"
+                    " style='color:#93c5fd;text-decoration:none;'>Open on Yahoo</a></div>"
+                    "</div>"
+                ),
+                unsafe_allow_html=True,
+            )
+
+
+def build_signal_explanation(row: pd.Series) -> pd.DataFrame:
+    checks = [
+        ("Signal", str(row.get("Signal", "Unknown"))),
+        ("Setup Score", f"{float(row.get('Setup Score', 0.0) or 0.0):.1f}"),
+        ("Close > EMA20", bool(row.get("Close > EMA20", False))),
+        ("Close > EMA30", bool(row.get("Close > EMA30", False))),
+        ("EMA20 > EMA30", bool(row.get("EMA20 > EMA30", False))),
+        ("Volume Confirm", bool(row.get("Volume Confirm", False))),
+        ("Trend Score", f"{float(row.get('Trend Score', 0.0) or 0.0):.1f}/5"),
+        ("Volume Ratio", f"{float(row.get('Volume Ratio', 0.0) or 0.0):.2f}x"),
+        ("Distance to EMA20 %", f"{float(row.get('Distance to EMA20 %', 0.0) or 0.0):.2f}%"),
+        ("Sector", str(row.get("Sector", "Unknown"))),
+        ("Industry", str(row.get("Industry", "Unknown"))),
+        ("Bar Date", str(row.get("Bar Date", ""))),
+    ]
+    return pd.DataFrame(checks, columns=["Condition", "Value"])
+
+
 symbols = load_symbols()
 if "_defaults_initialized" not in st.session_state:
     st.session_state["market_selector"] = None
@@ -853,6 +919,10 @@ with t4:
                 "Trend Score": 0.0,
                 "Volume Ratio": 0.0,
                 "Distance to EMA20 %": 0.0,
+                "Close > EMA20": False,
+                "Close > EMA30": False,
+                "EMA20 > EMA30": False,
+                "Volume Confirm": False,
             }
             for col, default in required_defaults.items():
                 if col not in display_df.columns:
@@ -946,7 +1016,30 @@ with t4:
                 "TradingView",
             ]].copy()
             st.session_state["scanner_last_display"] = display_df.copy()
-            render_scanner_table(view_df, scan_market)
+
+            result_view_mode = st.radio(
+                "Result View",
+                ["Table", "Cards"],
+                horizontal=True,
+                key="scanner_result_view_mode",
+            )
+            if result_view_mode == "Cards":
+                render_scanner_cards(view_df, scan_market)
+            else:
+                render_scanner_table(view_df, scan_market)
+
+            with st.expander("Why this signal", expanded=False):
+                explain_options = (
+                    display_df["Quote Symbol"].astype(str)
+                    + " • "
+                    + display_df["Signal"].astype(str)
+                    + " • score "
+                    + display_df["Setup Score"].astype(float).map(lambda x: f"{x:.1f}")
+                ).tolist()
+                explain_pick = st.selectbox("Select symbol", explain_options, key="scanner_signal_explain_pick")
+                explain_row = display_df.iloc[explain_options.index(explain_pick)]
+                explain_df = build_signal_explanation(explain_row)
+                st.dataframe(explain_df, hide_index=True, width="stretch")
 
             watchlists = st.session_state["watchlists"]
             watchlist_names = list_watchlist_names(watchlists)
@@ -1033,6 +1126,55 @@ with t5:
         mcols[2].metric("Breakout Buy", int((watch_df["Signal"] == "BREAKOUT BUY").sum()))
         mcols[3].metric("Pullback Buy", int((watch_df["Signal"] == "PULLBACK BUY").sum()))
 
+        watchlist_view = st.radio("Watchlist View", ["Table", "Board"], horizontal=True, key="watchlist_view_mode")
+
+        if watchlist_view == "Board":
+            signal_order = [
+                "BREAKOUT BUY",
+                "PULLBACK BUY",
+                "DOUBLE DOJI SUPPORT BUY",
+                "WATCH",
+                "NEUTRAL",
+                "DOUBLE DOJI RESISTANCE ALERT",
+                "AVOID",
+                "Unknown",
+            ]
+            groups: list[tuple[str, pd.DataFrame]] = []
+            seen = set()
+            for label in signal_order:
+                part = watch_df[watch_df["Signal"].fillna("Unknown") == label]
+                if not part.empty:
+                    groups.append((label, part))
+                    seen.add(label)
+            for extra in sorted(set(watch_df["Signal"].fillna("Unknown").astype(str).tolist()) - seen):
+                part = watch_df[watch_df["Signal"].fillna("Unknown") == extra]
+                if not part.empty:
+                    groups.append((extra, part))
+
+            if not groups:
+                st.info("No grouped watchlist items to display.")
+            else:
+                board_cols = st.columns(min(3, len(groups)))
+                for idx, (label, part) in enumerate(groups):
+                    with board_cols[idx % len(board_cols)]:
+                        st.markdown(f"**{label}** ({len(part)})")
+                        for _, row in part.sort_values("Setup Score", ascending=False).iterrows():
+                            sym = str(row.get("Quote Symbol") or "")
+                            score = float(pd.to_numeric(row.get("Setup Score"), errors="coerce") or 0.0)
+                            sector = str(row.get("Sector") or "Unknown")
+                            industry = str(row.get("Industry") or "Unknown")
+                            st.markdown(
+                                (
+                                    "<div style='background:rgba(15,23,42,0.62);border:1px solid rgba(148,163,184,0.16);"
+                                    "border-radius:10px;padding:0.45rem 0.55rem;margin:0.35rem 0;'>"
+                                    f"<div style='font-weight:700;color:#e8edf8;'>{html_lib.escape(sym)}</div>"
+                                    f"<div style='font-size:0.78rem;color:#cbd5e1;'>Score {score:.1f} • {html_lib.escape(sector)}</div>"
+                                    f"<div style='font-size:0.74rem;color:#94a3b8;'>{html_lib.escape(industry)}</div>"
+                                    "</div>"
+                                ),
+                                unsafe_allow_html=True,
+                            )
+
         sector_summary = (
             watch_df["Sector"]
             .fillna("Unknown")
@@ -1051,7 +1193,11 @@ with t5:
                 st.success(f"Removed {remove_symbol} from '{active_name}'.")
                 st.rerun()
 
-        st.dataframe(watch_df, hide_index=True, width="stretch")
+        if watchlist_view == "Table":
+            st.dataframe(watch_df, hide_index=True, width="stretch")
+        else:
+            with st.expander("Open Table View", expanded=False):
+                st.dataframe(watch_df, hide_index=True, width="stretch")
         st.download_button(
             "Export Watchlist CSV",
             watch_df.to_csv(index=False).encode(),
