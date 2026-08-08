@@ -19,7 +19,15 @@ class StrategyConfig:
 def convert_timeframe(daily: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     if timeframe == "Daily":
         return daily.copy()
-    return daily.resample("W-FRI").agg(
+
+    rule_map = {
+        "Weekly": "W-FRI",
+        "Monthly": "ME",
+        "Quarterly": "QE",
+    }
+    rule = rule_map.get(timeframe, "W-FRI")
+
+    return daily.resample(rule).agg(
         Open=("Open", "first"), High=("High", "max"), Low=("Low", "min"),
         Close=("Close", "last"), Volume=("Volume", "sum")
     ).dropna()
@@ -30,6 +38,8 @@ def enrich(data: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
     df["EMA20"] = df["Close"].ewm(span=20, adjust=False).mean()
     df["EMA30"] = df["Close"].ewm(span=30, adjust=False).mean()
     df["VOL_AVG20"] = df["Volume"].rolling(20).mean()
+    df["SUPPORT20"] = df["Low"].rolling(20).min().shift(1)
+    df["RESISTANCE20"] = df["High"].rolling(20).max().shift(1)
     df["ABOVE_EMA20"] = df["Close"] > df["EMA20"]
     df["ABOVE_EMA30"] = df["Close"] > df["EMA30"]
     df["EMA_STACK"] = df["EMA20"] > df["EMA30"]
@@ -59,12 +69,65 @@ def enrich(data: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
             df["ABOVE_EMA30"] & df["EMA_STACK"] & (df["Low"] <= df["EMA20"]) &
             (df["Close"] > df["EMA20"]) & df["VOLUME_CONFIRM"]
         )
+
+    candle_range = (df["High"] - df["Low"]).replace(0, np.nan)
+    body_size = (df["Close"] - df["Open"]).abs()
+    upper_wick = (df["High"] - df[["Open", "Close"]].max(axis=1)).clip(lower=0)
+    lower_wick = (df[["Open", "Close"]].min(axis=1) - df["Low"]).clip(lower=0)
+
+    df["IS_DOJI"] = (body_size / candle_range) <= 0.15
+    df["LOWER_WICK_PCT"] = lower_wick / candle_range
+    df["UPPER_WICK_PCT"] = upper_wick / candle_range
+
+    support_base = df["SUPPORT20"].replace(0, np.nan)
+    resistance_base = df["RESISTANCE20"].replace(0, np.nan)
+    df["NEAR_SUPPORT"] = (df["Low"] / support_base) <= 1.01
+    df["NEAR_RESISTANCE"] = (df["High"] / resistance_base) >= 0.99
+
+    df["DOUBLE_DOJI"] = df["IS_DOJI"] & df["IS_DOJI"].shift(1, fill_value=False)
+    support_zone = df["NEAR_SUPPORT"] | df["NEAR_SUPPORT"].shift(1, fill_value=False)
+    resistance_zone = df["NEAR_RESISTANCE"] | df["NEAR_RESISTANCE"].shift(1, fill_value=False)
+
+    lower_wick_pair = (df["LOWER_WICK_PCT"] >= 0.35) | (df["LOWER_WICK_PCT"].shift(1, fill_value=0) >= 0.35)
+    upper_wick_pair = (df["UPPER_WICK_PCT"] >= 0.35) | (df["UPPER_WICK_PCT"].shift(1, fill_value=0) >= 0.35)
+
+    prev_body_high = df[["Open", "Close"]].shift(1).max(axis=1)
+    prev_body_low = df[["Open", "Close"]].shift(1).min(axis=1)
+
+    df["DOUBLE_DOJI_SUPPORT_BUY"] = (
+        df["DOUBLE_DOJI"]
+        & support_zone
+        & lower_wick_pair
+        & (df["Close"] >= prev_body_high)
+        & df["ABOVE_EMA30"]
+    )
+    df["DOUBLE_DOJI_RESISTANCE_ALERT"] = (
+        df["DOUBLE_DOJI"]
+        & resistance_zone
+        & upper_wick_pair
+        & (df["Close"] <= prev_body_low)
+    )
+
     score = (df["ABOVE_EMA20"].astype(int) + df["ABOVE_EMA30"].astype(int) +
              df["EMA_STACK"].astype(int) + df["EMA20_RISING"].astype(int) +
              df["EMA30_RISING"].astype(int) + df["VOLUME_CONFIRM"].astype(int))
     df["SIGNAL"] = np.select(
-        [df["BREAKOUT_BUY"], df["PULLBACK_BUY"], score >= 5, score >= 3],
-        ["BREAKOUT BUY", "PULLBACK BUY", "WATCH", "NEUTRAL"],
+        [
+            df["BREAKOUT_BUY"],
+            df["PULLBACK_BUY"],
+            df["DOUBLE_DOJI_SUPPORT_BUY"],
+            df["DOUBLE_DOJI_RESISTANCE_ALERT"],
+            score >= 5,
+            score >= 3,
+        ],
+        [
+            "BREAKOUT BUY",
+            "PULLBACK BUY",
+            "DOUBLE DOJI SUPPORT BUY",
+            "DOUBLE DOJI RESISTANCE ALERT",
+            "WATCH",
+            "NEUTRAL",
+        ],
         default="AVOID",
     )
     return df

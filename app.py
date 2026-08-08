@@ -206,6 +206,8 @@ st.markdown(
     }
     .signal-pill.breakout { background: linear-gradient(135deg, #16a34a, #22c55e); }
     .signal-pill.pullback { background: linear-gradient(135deg, #0ea5e9, #2563eb); }
+    .signal-pill.doji_support { background: linear-gradient(135deg, #22c55e, #0ea5e9); }
+    .signal-pill.doji_resistance { background: linear-gradient(135deg, #f97316, #dc2626); }
     .signal-pill.watch { background: linear-gradient(135deg, #f59e0b, #f97316); }
     .signal-pill.neutral { background: linear-gradient(135deg, #94a3b8, #64748b); }
     .signal-pill.avoid { background: linear-gradient(135deg, #ef4444, #b91c1c); }
@@ -268,6 +270,8 @@ MARKET_LABELS = {"India": "India", "US": "USA"}
 signal_style = {
     "BREAKOUT BUY": "breakout",
     "PULLBACK BUY": "pullback",
+    "DOUBLE DOJI SUPPORT BUY": "doji_support",
+    "DOUBLE DOJI RESISTANCE ALERT": "doji_resistance",
     "WATCH": "watch",
     "NEUTRAL": "neutral",
     "AVOID": "avoid",
@@ -471,7 +475,7 @@ with st.sidebar:
 
     timeframe = st.radio(
         "Timeframe",
-        ["Daily", "Weekly"],
+        ["Daily", "Weekly", "Monthly", "Quarterly"],
         horizontal=True,
         index=None,
         key="timeframe_selector",
@@ -549,10 +553,18 @@ with t4:
     st.subheader("Signal scanner")
     st.caption("Filter by market, capitalization, and signal strength to find the best setups quickly.")
     scan_market = st.selectbox("Scanner Market", ["India", "US"], key="sm")
-    scan_tf = st.radio("Scanner Timeframe", ["Daily", "Weekly"], horizontal=True)
+    scan_tf = st.radio("Scanner Timeframe", ["Daily", "Weekly", "Monthly", "Quarterly"], horizontal=True)
     scan_market_cap = st.selectbox("Market Cap", MARKET_CAP_OPTIONS, index=0, help="Mega Cap = $200B+, Large Cap = $10B-$200B, Mid Cap = $2B-$10B")
-    signal_options = ["BREAKOUT BUY", "PULLBACK BUY", "WATCH", "NEUTRAL", "AVOID"]
-    default_signals = ["BREAKOUT BUY", "PULLBACK BUY", "WATCH"]
+    signal_options = [
+        "BREAKOUT BUY",
+        "PULLBACK BUY",
+        "DOUBLE DOJI SUPPORT BUY",
+        "WATCH",
+        "NEUTRAL",
+        "DOUBLE DOJI RESISTANCE ALERT",
+        "AVOID",
+    ]
+    default_signals = ["BREAKOUT BUY", "PULLBACK BUY", "DOUBLE DOJI SUPPORT BUY", "WATCH"]
     for option in signal_options:
         key_name = f"signal_filter_{option.replace(' ', '_')}"
         if key_name not in st.session_state:
@@ -712,9 +724,11 @@ with t4:
             signal_rank = {
                 "BREAKOUT BUY": 1,
                 "PULLBACK BUY": 2,
-                "WATCH": 3,
-                "NEUTRAL": 4,
-                "AVOID": 5,
+                "DOUBLE DOJI SUPPORT BUY": 3,
+                "WATCH": 4,
+                "NEUTRAL": 5,
+                "DOUBLE DOJI RESISTANCE ALERT": 6,
+                "AVOID": 7,
                 "ERROR": 9,
             }
             display_df["_signal_rank"] = display_df["Signal"].map(signal_rank).fillna(99)

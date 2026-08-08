@@ -56,6 +56,8 @@ def setup_score_components(row: pd.Series, signal_name: str) -> tuple[float, flo
     signal_bonus = {
         "BREAKOUT BUY": 40.0,
         "PULLBACK BUY": 32.0,
+        "DOUBLE DOJI SUPPORT BUY": 30.0,
+        "DOUBLE DOJI RESISTANCE ALERT": 8.0,
         "WATCH": 20.0,
         "NEUTRAL": 10.0,
         "AVOID": 0.0,
@@ -151,7 +153,16 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
                 "Distance to EMA20 %": 0.0,
             })
     result = pd.DataFrame(rows)
-    order = {"BREAKOUT BUY": 1, "PULLBACK BUY": 2, "WATCH": 3, "NEUTRAL": 4, "AVOID": 5, "ERROR": 9}
+    order = {
+        "BREAKOUT BUY": 1,
+        "PULLBACK BUY": 2,
+        "DOUBLE DOJI SUPPORT BUY": 3,
+        "WATCH": 4,
+        "NEUTRAL": 5,
+        "DOUBLE DOJI RESISTANCE ALERT": 6,
+        "AVOID": 7,
+        "ERROR": 9,
+    }
     result["_rank"] = result["Signal"].map(order).fillna(99)
     result = result.sort_values(["Setup Score", "_rank", "Market", "Symbol"], ascending=[False, True, True, True])
     return result.drop(columns="_rank")
