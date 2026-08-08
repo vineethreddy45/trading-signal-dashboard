@@ -1,6 +1,7 @@
 from pathlib import Path
 import html as html_lib
 import logging
+import re
 import resource
 import sys
 from urllib.parse import quote_plus
@@ -37,6 +38,60 @@ def log_runtime_event(event: str):
     logger.info("%s | memory_mb=%.1f", event, process_memory_mb())
 
 
+def detect_assistant_intent(query: str) -> str:
+    q = str(query).strip().lower()
+    if not q:
+        return "help"
+
+    if any(token in q for token in ["compare", "vs", "versus"]):
+        return "symbol_compare"
+    if any(token in q for token in ["risk", "drawdown", "exposure", "danger"]):
+        return "risk_summary"
+    if "watchlist" in q:
+        return "watchlist_summary"
+    if "top" in q and any(token in q for token in ["scanner", "setup", "symbol", "symbols"]):
+        return "top_setups"
+    if any(token in q for token in ["signal", "current"]):
+        return "current_signal"
+    if any(token in q for token in ["backtest", "return", "win rate", "performance"]):
+        return "backtest_summary"
+    return "help"
+
+
+def extract_symbols_from_query(query: str) -> list[str]:
+    raw = re.findall(r"\b[A-Za-z]{1,6}(?:\.[A-Za-z]{1,3})?\b", str(query))
+    symbols: list[str] = []
+    for token in raw:
+        up = token.upper()
+        if up in {"TOP", "SETUP", "SETUPS", "WATCHLIST", "SIGNAL", "RISK", "RETURN", "COMPARE", "VERSUS"}:
+            continue
+        if any(ch.isdigit() for ch in up):
+            continue
+        symbols.append(up)
+    # Keep order while deduplicating.
+    return list(dict.fromkeys(symbols))
+
+
+def _build_symbol_lookup(scanner_df: pd.DataFrame, watchlist_df: pd.DataFrame) -> dict[str, dict]:
+    lookup: dict[str, dict] = {}
+    for df in [scanner_df, watchlist_df]:
+        if df.empty or "Quote Symbol" not in df.columns:
+            continue
+        for _, row in df.iterrows():
+            sym = str(row.get("Quote Symbol") or "").strip().upper()
+            if not sym:
+                continue
+            lookup[sym] = {
+                "Signal": str(row.get("Signal") or "Unknown"),
+                "Setup Score": float(pd.to_numeric(row.get("Setup Score"), errors="coerce") or 0.0),
+                "Sector": str(row.get("Sector") or "Unknown"),
+                "Industry": str(row.get("Industry") or "Unknown"),
+                "Market": str(row.get("Market") or "Unknown"),
+                "Bar Date": str(row.get("Bar Date") or ""),
+            }
+    return lookup
+
+
 def build_assistant_reply(
     query: str,
     scanner_df: pd.DataFrame,
@@ -44,48 +99,100 @@ def build_assistant_reply(
     current_signal: dict,
     metrics: dict,
 ) -> str:
-    q = str(query).strip().lower()
-    if not q:
-        return "Ask about top setups, current signal status, watchlist summary, or backtest metrics."
+    intent = detect_assistant_intent(query)
+    q = str(query).strip()
 
-    if "top" in q and ("scanner" in q or "setup" in q or "symbols" in q):
+    if intent == "top_setups":
         if scanner_df.empty:
-            return "Scanner results are empty. Run scanner first, then ask for top setups."
+            return "Intent: top_setups\nSummary: scanner results are empty.\nAction: run scanner first, then ask for top setups."
         top = scanner_df.sort_values("Setup Score", ascending=False).head(5)
         rows = [
             f"{r['Quote Symbol']} ({r['Signal']}) score {float(r.get('Setup Score', 0.0)):.1f}"
             for _, r in top.iterrows()
         ]
-        return "Top scanner setups:\n" + "\n".join(rows)
+        return "Intent: top_setups\nSummary: top scanner setups by score.\nEvidence:\n" + "\n".join(rows)
 
-    if "watchlist" in q:
+    if intent == "watchlist_summary":
         if watchlist_df.empty:
-            return "Your selected watchlist is empty. Add symbols from the scanner tab."
+            return "Intent: watchlist_summary\nSummary: selected watchlist is empty.\nAction: add symbols from scanner results."
         sector_count = watchlist_df["Sector"].fillna("Unknown").value_counts().head(3)
         sector_text = ", ".join([f"{name} ({count})" for name, count in sector_count.items()])
         avg_score = pd.to_numeric(watchlist_df.get("Setup Score"), errors="coerce").fillna(0.0).mean()
         return (
-            f"Watchlist has {len(watchlist_df)} symbols. "
-            f"Average setup score is {avg_score:.1f}. "
-            f"Top sectors: {sector_text}."
+            "Intent: watchlist_summary\n"
+            f"Summary: watchlist has {len(watchlist_df)} symbols with average score {avg_score:.1f}.\n"
+            f"Evidence: top sectors are {sector_text}."
         )
 
-    if "signal" in q or "current" in q:
+    if intent == "current_signal":
         return (
-            f"Current chart signal is {current_signal['signal']}. "
-            f"Close {current_signal['close']:.2f}, EMA20 {current_signal['ema20']:.2f}, "
-            f"EMA30 {current_signal['ema30']:.2f}, volume confirm={current_signal['volume_confirm']}."
+            "Intent: current_signal\n"
+            f"Summary: current chart signal is {current_signal['signal']}.\n"
+            f"Evidence: close={current_signal['close']:.2f}, EMA20={current_signal['ema20']:.2f}, "
+            f"EMA30={current_signal['ema30']:.2f}, volume_confirm={current_signal['volume_confirm']}."
         )
 
-    if "backtest" in q or "return" in q:
+    if intent == "backtest_summary":
         return (
-            f"Backtest metrics: trades={metrics['trades']}, win rate={metrics['win_rate']:.1f}%, "
-            f"return={metrics['return_pct']:.1f}%, max drawdown={metrics['max_drawdown_pct']:.1f}%, "
-            f"transaction costs={metrics.get('total_costs', 0.0):,.2f}."
+            "Intent: backtest_summary\n"
+            f"Summary: return={metrics['return_pct']:.1f}% with win rate={metrics['win_rate']:.1f}%.\n"
+            f"Evidence: trades={metrics['trades']}, max_drawdown={metrics['max_drawdown_pct']:.1f}%, "
+            f"transaction_costs={metrics.get('total_costs', 0.0):,.2f}."
+        )
+
+    if intent == "symbol_compare":
+        lookup = _build_symbol_lookup(scanner_df, watchlist_df)
+        symbols = extract_symbols_from_query(q)
+        if len(symbols) < 2 and not scanner_df.empty and "Quote Symbol" in scanner_df.columns:
+            top_two = scanner_df.sort_values("Setup Score", ascending=False)["Quote Symbol"].astype(str).head(2).tolist()
+            symbols = list(dict.fromkeys(symbols + [s.upper() for s in top_two]))
+
+        if len(symbols) < 2:
+            return "Intent: symbol_compare\nSummary: need two symbols to compare.\nAction: ask like 'compare NVDA vs AAPL'."
+
+        a, b = symbols[0], symbols[1]
+        if a not in lookup or b not in lookup:
+            missing = [s for s in [a, b] if s not in lookup]
+            return (
+                "Intent: symbol_compare\n"
+                f"Summary: cannot compare {a} vs {b} because missing context for {', '.join(missing)}.\n"
+                "Action: run scanner or add symbols to watchlist first."
+            )
+
+        left, right = lookup[a], lookup[b]
+        better = a if left["Setup Score"] >= right["Setup Score"] else b
+        return (
+            "Intent: symbol_compare\n"
+            f"Summary: {better} currently has stronger setup score.\n"
+            f"Evidence: {a} -> signal={left['Signal']}, score={left['Setup Score']:.1f}, sector={left['Sector']}; "
+            f"{b} -> signal={right['Signal']}, score={right['Setup Score']:.1f}, sector={right['Sector']}."
+        )
+
+    if intent == "risk_summary":
+        if watchlist_df.empty:
+            concentration_text = "watchlist is empty"
+        else:
+            sector_share = watchlist_df["Sector"].fillna("Unknown").value_counts(normalize=True)
+            top_sector = sector_share.index[0]
+            top_sector_pct = float(sector_share.iloc[0] * 100)
+            concentration_text = f"top sector {top_sector} at {top_sector_pct:.1f}%"
+
+        return (
+            "Intent: risk_summary\n"
+            f"Summary: drawdown={metrics['max_drawdown_pct']:.1f}% and {concentration_text}.\n"
+            f"Evidence: trades={metrics['trades']}, win_rate={metrics['win_rate']:.1f}%, "
+            f"return={metrics['return_pct']:.1f}%, transaction_costs={metrics.get('total_costs', 0.0):,.2f}."
         )
 
     return (
-        "Try asking: 'top 5 scanner setups', 'watchlist summary', 'current signal', or 'backtest return'."
+        "Intent: help\n"
+        "Try one of these prompts:\n"
+        "- top 5 scanner setups\n"
+        "- watchlist summary\n"
+        "- current signal\n"
+        "- backtest return\n"
+        "- compare NVDA vs AAPL\n"
+        "- risk summary"
     )
 
 st.markdown(
@@ -987,4 +1094,6 @@ with t6:
     st.write("- watchlist summary")
     st.write("- current signal")
     st.write("- backtest return")
+    st.write("- compare NVDA vs AAPL")
+    st.write("- risk summary")
 st.caption("Educational research tool only. Data may be delayed.")
