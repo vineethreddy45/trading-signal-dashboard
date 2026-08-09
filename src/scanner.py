@@ -85,7 +85,14 @@ def setup_score_components(row: pd.Series, signal_name: str) -> tuple[float, flo
     return score, float(trend_score), float(volume_ratio), float(dist_ema20_pct)
 
 
-def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = None) -> pd.DataFrame:
+def scan_symbols(
+    symbols_df: pd.DataFrame,
+    timeframe: str,
+    limit: int | None = None,
+    fast_ema: int = 20,
+    slow_ema: int = 30,
+    require_price_above_ema200: bool = False,
+) -> pd.DataFrame:
     rows, source = [], symbols_df.head(limit) if limit else symbols_df
     for item in source.itertuples(index=False):
         try:
@@ -94,7 +101,13 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
             if not quote_symbol:
                 raise ValueError("Missing symbol")
 
-            cfg = StrategyConfig(timeframe=timeframe, market=item.market)
+            cfg = StrategyConfig(
+                timeframe=timeframe,
+                market=item.market,
+                fast_ema=fast_ema,
+                slow_ema=slow_ema,
+                require_price_above_ema200=require_price_above_ema200,
+            )
             daily = download_history(quote_symbol, "1y")
             bars = convert_timeframe(daily, timeframe)
             enriched_bars = enrich(bars, cfg)
@@ -120,6 +133,7 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
                 "Volume Confirm": signal["volume_confirm"],
                 "Close > EMA20": signal["above_ema20"],
                 "Close > EMA30": signal["above_ema30"],
+                "Close > EMA200": bool(row.get("ABOVE_EMA200", False)),
                 "EMA20 > EMA30": signal["ema_stack"],
                 "Bar Date": signal["bar_date"],
                 "Setup Score": score,
@@ -145,6 +159,7 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
                 "Volume Confirm": False,
                 "Close > EMA20": False,
                 "Close > EMA30": False,
+                "Close > EMA200": False,
                 "EMA20 > EMA30": False,
                 "Bar Date": None,
                 "Setup Score": 0.0,
