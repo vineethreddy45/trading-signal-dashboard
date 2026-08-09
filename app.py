@@ -917,8 +917,6 @@ with t4:
         count = st.slider("Number of symbols", min_count, max_count, value=default_count)
         if "scanner_last_result" not in st.session_state:
             st.session_state["scanner_last_result"] = pd.DataFrame()
-        if "scanner_last_failed" not in st.session_state:
-            st.session_state["scanner_last_failed"] = pd.DataFrame()
         if st.button("Run Scanner"):
             if not allowed:
                 st.warning("Please select at least one signal type to scan.")
@@ -935,8 +933,6 @@ with t4:
                         scan_slow_ema,
                         scan_require_price_above_ema200,
                     )
-                    failed = result[result["Signal"] == "ERROR"].copy()
-                    st.session_state["scanner_last_failed"] = failed.copy()
                     filtered = result[result.Signal.isin(allowed)].copy()
                     if scan_market_cap != "All":
                         filtered = filtered[filtered["Market Cap Bucket"] == scan_market_cap]
@@ -952,7 +948,6 @@ with t4:
                     log_runtime_event("scanner_done")
 
         filtered = st.session_state.get("scanner_last_result", pd.DataFrame()).copy()
-        failed = st.session_state.get("scanner_last_failed", pd.DataFrame()).copy()
 
         sector_selection = []
         industry_selection = []
@@ -970,11 +965,6 @@ with t4:
 
         total_filtered = len(filtered)
         st.markdown(f"**Results:** {total_filtered} matching symbol{'s' if total_filtered != 1 else ''}")
-        if not failed.empty:
-            st.warning(f"Skipped {len(failed)} symbol{'s' if len(failed) != 1 else ''} due to data errors.")
-            with st.expander("Failed Symbols"):
-                failed_view = failed[["Symbol", "Quote Symbol", "Error"]].copy()
-                st.dataframe(failed_view, hide_index=True, width="stretch")
         if filtered.empty:
             st.info("Run scanner to load results with current filters.")
         else:
