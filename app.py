@@ -11,7 +11,7 @@ import streamlit as st
 import yfinance as yf
 from src.market_data import download_history, latest_price
 from src.scanner import scan_symbols
-from src.strategy import StrategyConfig, backtest, convert_timeframe, enrich, latest_signal
+from src.strategy import backtest, build_strategy_config, convert_timeframe, enrich, latest_signal
 from src.watchlist_store import (
     add_symbols_to_watchlist,
     create_watchlist,
@@ -794,7 +794,7 @@ if slow_ema <= fast_ema:
     st.stop()
 
 
-cfg = StrategyConfig(
+cfg = build_strategy_config(
     timeframe=timeframe,
     capital=capital,
     commission_pct=float(commission_pct),

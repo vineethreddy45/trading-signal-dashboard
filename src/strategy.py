@@ -1,5 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
+import inspect
 import numpy as np
 import pandas as pd
 
@@ -17,6 +18,13 @@ class StrategyConfig:
     fast_ema: int = 20
     slow_ema: int = 30
     require_price_above_ema200: bool = False
+
+
+def build_strategy_config(**kwargs) -> StrategyConfig:
+    params = {k: v for k, v in kwargs.items() if v is not None}
+    supported = set(inspect.signature(StrategyConfig).parameters)
+    filtered = {k: v for k, v in params.items() if k in supported}
+    return StrategyConfig(**filtered)
 
 
 def convert_timeframe(daily: pd.DataFrame, timeframe: str) -> pd.DataFrame:

@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pandas as pd
 
 from src.market_data import _symbol_candidates
-from src.strategy import StrategyConfig, backtest, enrich
+from src.strategy import StrategyConfig, backtest, build_strategy_config, enrich
 
 
 class TestMarketDataFallback(unittest.TestCase):
@@ -16,6 +16,15 @@ class TestMarketDataFallback(unittest.TestCase):
 
 
 class TestBacktestTransactionCosts(unittest.TestCase):
+    def test_build_strategy_config_accepts_compatibility_flag(self):
+        cfg = build_strategy_config(
+            timeframe="Daily",
+            market="India",
+            require_price_above_ema200=True,
+        )
+        self.assertIsInstance(cfg, StrategyConfig)
+        self.assertTrue(cfg.require_price_above_ema200)
+
     def test_backtest_reports_transaction_costs(self):
         index = pd.date_range("2026-01-01", periods=3, freq="D")
         enriched = pd.DataFrame(

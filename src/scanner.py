@@ -7,7 +7,7 @@ import pandas as pd
 import yfinance as yf
 
 from src.market_data import download_history
-from src.strategy import StrategyConfig, convert_timeframe, enrich, latest_signal
+from src.strategy import build_strategy_config, convert_timeframe, enrich, latest_signal
 
 
 MARKET_CAP_BUCKETS = {
@@ -101,7 +101,7 @@ def scan_symbols(
             if not quote_symbol:
                 raise ValueError("Missing symbol")
 
-            cfg = StrategyConfig(
+            cfg = build_strategy_config(
                 timeframe=timeframe,
                 market=item.market,
                 fast_ema=fast_ema,
