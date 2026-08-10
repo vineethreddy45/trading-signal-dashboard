@@ -1,6 +1,5 @@
 from __future__ import annotations
 from dataclasses import dataclass
-import inspect
 import numpy as np
 import pandas as pd
 
@@ -15,13 +14,6 @@ class StrategyConfig:
     commission_pct: float = 0.05
     slippage_pct: float = 0.05
     market: str = "USA"
-
-
-def build_strategy_config(**kwargs) -> StrategyConfig:
-    params = {k: v for k, v in kwargs.items() if v is not None}
-    supported = set(inspect.signature(StrategyConfig).parameters)
-    filtered = {k: v for k, v in params.items() if k in supported}
-    return StrategyConfig(**filtered)
 
 
 def convert_timeframe(daily: pd.DataFrame, timeframe: str) -> pd.DataFrame:

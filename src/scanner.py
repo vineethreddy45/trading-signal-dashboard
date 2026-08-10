@@ -7,7 +7,7 @@ import pandas as pd
 import yfinance as yf
 
 from src.market_data import download_history
-from src.strategy import build_strategy_config, convert_timeframe, enrich, latest_signal
+from src.strategy import StrategyConfig, convert_timeframe, enrich, latest_signal
 
 
 MARKET_CAP_BUCKETS = {
