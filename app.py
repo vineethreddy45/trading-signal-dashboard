@@ -773,7 +773,7 @@ with st.sidebar:
     )
     strategy_col1, strategy_col2 = st.columns(2)
     fast_ema = int(strategy_col1.number_input("Fast EMA", min_value=2, max_value=200, value=20, step=1))
-    slow_ema = int(strategy_col2.number_input("Slow EMA", min_value=3, max_value=300, value=30, step=1))
+    slow_ema = int(strategy_col2.number_input("Slow EMA", min_value=3, max_value=300, value=50, step=1))
     require_price_above_ema200 = st.checkbox("Require price > EMA 200", value=True)
     capital = st.number_input("Capital", min_value=1000.0, value=1_000_000.0 if market=="India" else 10_000.0, step=1000.0)
     c1, c2 = st.columns(2)
@@ -871,7 +871,7 @@ with t4:
     )
     scan_strategy_col1, scan_strategy_col2 = st.columns(2)
     scan_fast_ema = int(scan_strategy_col1.number_input("Fast EMA", min_value=2, max_value=200, value=20, step=1, key="scan_fast_ema"))
-    scan_slow_ema = int(scan_strategy_col2.number_input("Slow EMA", min_value=3, max_value=300, value=30, step=1, key="scan_slow_ema"))
+    scan_slow_ema = int(scan_strategy_col2.number_input("Slow EMA", min_value=3, max_value=300, value=50, step=1, key="scan_slow_ema"))
     scan_require_price_above_ema200 = st.checkbox("Require price > EMA 200", value=True, key="scan_require_price_above_ema200")
 
     if scan_slow_ema <= scan_fast_ema:
