@@ -11,7 +11,7 @@ import streamlit as st
 import yfinance as yf
 from src.market_data import download_history, latest_price
 from src.scanner import scan_symbols
-from src.strategy import StrategyConfig, backtest, convert_timeframe, enrich, latest_signal
+from src.strategy import backtest, build_strategy_config, convert_timeframe, enrich, latest_signal
 from src.watchlist_store import (
     add_symbols_to_watchlist,
     create_watchlist,
@@ -25,7 +25,6 @@ from src.watchlist_store import (
 st.set_page_config(page_title="Trading Signal Dashboard", layout="wide")
 
 logger = logging.getLogger("trading_dashboard")
-
 
 def process_memory_mb() -> float:
     usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
@@ -413,8 +412,8 @@ def company_name_from_ticker(ticker: str) -> str:
         return ticker
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
-def search_yahoo_symbols(query: str, market_label: str, max_results: int = 12) -> pd.DataFrame:
+@st.cache_data(ttl=300, show_spinner=False)
+def search_yahoo_symbols(query: str, market_label: str, max_results: int = 10) -> pd.DataFrame:
     cols = ["symbol", "name", "exchange"]
     q = str(query).strip()
     if not q:
@@ -619,7 +618,9 @@ def build_signal_explanation(row: pd.Series) -> pd.DataFrame:
         ("Industry", str(row.get("Industry", "Unknown"))),
         ("Bar Date", str(row.get("Bar Date", ""))),
     ]
-    return pd.DataFrame(checks, columns=["Condition", "Value"])
+    explain_df = pd.DataFrame(checks, columns=["Condition", "Value"])
+    explain_df["Value"] = explain_df["Value"].astype(str)
+    return explain_df
 
 
 symbols = load_symbols()
@@ -731,7 +732,7 @@ if not display:
     display = str(symbol).strip().upper()
 
 
-cfg = StrategyConfig(
+cfg = build_strategy_config(
     timeframe=timeframe,
     capital=capital,
     commission_pct=float(commission_pct),
@@ -802,24 +803,29 @@ with t4:
         "DOUBLE DOJI RESISTANCE ALERT",
         "AVOID",
     ]
-    default_signals = ["BREAKOUT BUY", "PULLBACK BUY", "DOUBLE DOJI SUPPORT BUY", "WATCH"]
+    default_signals = ["BREAKOUT BUY", "PULLBACK BUY"]
     for option in signal_options:
-        key_name = f"signal_filter_{option.replace(' ', '_')}"
+        key_name = f"signal_filter_v2_{option.replace(' ', '_')}"
         if key_name not in st.session_state:
             st.session_state[key_name] = option in default_signals
     signal_checkboxes = {}
     signal_cols = st.columns(4)
     for idx, option in enumerate(signal_options):
         with signal_cols[idx % 4]:
-            signal_checkboxes[option] = st.checkbox(option, key=f"signal_filter_{option.replace(' ', '_')}")
+            signal_checkboxes[option] = st.checkbox(option, key=f"signal_filter_v2_{option.replace(' ', '_')}")
     allowed = [option for option in signal_options if signal_checkboxes.get(option, False)]
     if not allowed:
         st.warning("Please select at least one signal type to scan.")
     f1, f2, f3, f4 = st.columns(4)
-    rv = f1.checkbox("Require volume", value=True)
-    e20 = f2.checkbox("Require close > EMA20")
-    e30 = f3.checkbox("Require close > EMA30")
-    stack = f4.checkbox("Require EMA20 > EMA30")
+    rv = f1.checkbox("Require volume", value=False, key="scanner_require_volume_v2")
+    e20 = f2.checkbox("Require close > EMA20", key="scanner_require_close_ema20_v2")
+    e30 = f3.checkbox("Require close > EMA30", key="scanner_require_close_ema30_v2")
+    stack = f4.checkbox("Require EMA20 > EMA30", key="scanner_require_ema_stack_v2")
+    show_everything = st.checkbox(
+        "Show everything (ignore all signal filters)",
+        value=True,
+        key="scanner_show_everything_v1",
+    )
     # Use the same mapping as the sidebar so UI labels ("US") map to CSV values ("USA")
     scan_market_value = MARKET_LABELS.get(scan_market, scan_market)
     sdf = symbols[symbols.market == scan_market_value]
@@ -828,14 +834,13 @@ with t4:
         st.warning("No symbols available for the selected market.")
     else:
         min_count = 5 if max_count >= 5 else 1
-        default_count = min(20, max_count)
-        count = st.slider("Number of symbols", min_count, max_count, value=default_count)
+        default_count = max_count
+        count = st.slider("Number of symbols", min_count, max_count, value=default_count, key="scanner_symbol_count_v2")
+        effective_count = max_count if show_everything else count
         if "scanner_last_result" not in st.session_state:
             st.session_state["scanner_last_result"] = pd.DataFrame()
-        if "scanner_last_failed" not in st.session_state:
-            st.session_state["scanner_last_failed"] = pd.DataFrame()
         if st.button("Run Scanner"):
-            if not allowed:
+            if not allowed and not show_everything:
                 st.warning("Please select at least one signal type to scan.")
             else:
                 with st.spinner("Scanning..."):
@@ -843,21 +848,22 @@ with t4:
                     result = run_scanner_cached(
                         sdf,
                         scan_tf,
-                        count,
+                        effective_count
                     )
-                    failed = result[result["Signal"] == "ERROR"].copy()
-                    st.session_state["scanner_last_failed"] = failed.copy()
-                    filtered = result[result.Signal.isin(allowed)].copy()
-                    if scan_market_cap != "All":
-                        filtered = filtered[filtered["Market Cap Bucket"] == scan_market_cap]
-                    if rv:
-                        filtered = filtered[filtered["Volume Confirm"] == True]
-                    if e20:
-                        filtered = filtered[filtered["Close > EMA20"] == True]
-                    if e30:
-                        filtered = filtered[filtered["Close > EMA30"] == True]
-                    if stack:
-                        filtered = filtered[filtered["EMA20 > EMA30"] == True]
+                    if show_everything:
+                        filtered = result.copy()
+                    else:
+                        filtered = result[result.Signal.isin(allowed)].copy()
+                        if scan_market_cap != "All":
+                            filtered = filtered[filtered["Market Cap Bucket"] == scan_market_cap]
+                        if rv:
+                            filtered = filtered[filtered["Volume Confirm"] == True]
+                        if e20:
+                            filtered = filtered[filtered["Close > EMA20"] == True]
+                        if e30:
+                            filtered = filtered[filtered["Close > EMA30"] == True]
+                        if stack:
+                            filtered = filtered[filtered["EMA20 > EMA30"] == True]
                     st.session_state["scanner_last_result"] = filtered.copy()
                     log_runtime_event("scanner_done")
 
@@ -866,7 +872,7 @@ with t4:
 
         sector_selection = []
         industry_selection = []
-        if not filtered.empty:
+        if not filtered.empty and not show_everything:
             filter_cols = st.columns(2)
             available_sectors = sorted([s for s in filtered.get("Sector", pd.Series(dtype=str)).dropna().astype(str).unique() if s])
             available_industries = sorted([s for s in filtered.get("Industry", pd.Series(dtype=str)).dropna().astype(str).unique() if s])
@@ -880,11 +886,6 @@ with t4:
 
         total_filtered = len(filtered)
         st.markdown(f"**Results:** {total_filtered} matching symbol{'s' if total_filtered != 1 else ''}")
-        if not failed.empty:
-            st.warning(f"Skipped {len(failed)} symbol{'s' if len(failed) != 1 else ''} due to data errors.")
-            with st.expander("Failed Symbols"):
-                failed_view = failed[["Symbol", "Quote Symbol", "Error"]].copy()
-                st.dataframe(failed_view, hide_index=True, width="stretch")
         if filtered.empty:
             st.info("Run scanner to load results with current filters.")
         else:
