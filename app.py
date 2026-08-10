@@ -844,9 +844,6 @@ with t4:
                         sdf,
                         scan_tf,
                         count,
-                        scan_fast_ema,
-                        scan_slow_ema,
-                        scan_require_price_above_ema200,
                     )
                     failed = result[result["Signal"] == "ERROR"].copy()
                     st.session_state["scanner_last_failed"] = failed.copy()

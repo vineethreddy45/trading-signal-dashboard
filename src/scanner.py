@@ -97,9 +97,6 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
             cfg = StrategyConfig(
                 timeframe=timeframe,
                 market=item.market,
-                fast_ema=fast_ema,
-                slow_ema=slow_ema,
-                require_price_above_ema200=require_price_above_ema200,
             )
             daily = download_history(quote_symbol, "1y")
             bars = convert_timeframe(daily, timeframe)
