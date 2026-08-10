@@ -349,36 +349,6 @@ st.markdown(
     .stAlert, .stWarning, .stError, .stInfo {
         border-radius: 12px;
     }
-    .strategy-panel {
-        background: rgba(226, 232, 240, 0.12);
-        border: 1px solid rgba(148, 163, 184, 0.28);
-        border-radius: 12px;
-        padding: 0.65rem 0.75rem 0.35rem 0.75rem;
-        margin: 0.35rem 0 0.5rem 0;
-    }
-    .strategy-panel-title {
-        font-size: 1rem;
-        font-weight: 700;
-        margin-bottom: 0.15rem;
-    }
-    .strategy-panel-hint {
-        color: #cbd5e1 !important;
-        font-size: 0.78rem;
-        margin-bottom: 0.15rem;
-    }
-    .strategy-divider {
-        height: 1px;
-        background: rgba(148, 163, 184, 0.25);
-        margin: 0.35rem 0 0.5rem 0;
-    }
-    .stNumberInput [data-testid="stNumberInputContainer"] {
-        border-radius: 10px;
-    }
-    .stNumberInput button {
-        border-radius: 8px !important;
-        min-width: 1.8rem;
-        height: 1.8rem;
-    }
     .stDataFrame td, .stDataFrame th {
         background: rgba(15, 23, 42, 0.95) !important;
         color: #e8edf8 !important;
@@ -497,22 +467,8 @@ def quote_symbol_for_row(row: pd.Series) -> str:
 
 
 @st.cache_data(ttl=900, show_spinner=False)
-def run_scanner_cached(
-    symbols_df: pd.DataFrame,
-    timeframe: str,
-    count: int,
-    fast_ema: int,
-    slow_ema: int,
-    require_price_above_ema200: bool,
-) -> pd.DataFrame:
-    return scan_symbols(
-        symbols_df,
-        timeframe,
-        count,
-        fast_ema=fast_ema,
-        slow_ema=slow_ema,
-        require_price_above_ema200=require_price_above_ema200,
-    )
+def run_scanner_cached(symbols_df: pd.DataFrame, timeframe: str, count: int) -> pd.DataFrame:
+    return scan_symbols(symbols_df, timeframe, count)
 
 
 def apply_symbol_from_query(symbols_df: pd.DataFrame) -> None:
@@ -654,7 +610,6 @@ def build_signal_explanation(row: pd.Series) -> pd.DataFrame:
         ("Setup Score", f"{float(row.get('Setup Score', 0.0) or 0.0):.1f}"),
         ("Close > EMA20", bool(row.get("Close > EMA20", False))),
         ("Close > EMA30", bool(row.get("Close > EMA30", False))),
-        ("Close > EMA200", bool(row.get("Close > EMA200", False))),
         ("EMA20 > EMA30", bool(row.get("EMA20 > EMA30", False))),
         ("Volume Confirm", bool(row.get("Volume Confirm", False))),
         ("Trend Score", f"{float(row.get('Trend Score', 0.0) or 0.0):.1f}/5"),
@@ -761,20 +716,6 @@ with st.sidebar:
         key="timeframe_selector",
     )
     period = st.selectbox("History", ["1y", "3y", "5y", "max"], index=0)
-    st.markdown(
-        """
-        <div class="strategy-panel">
-            <div class="strategy-panel-title">Strategy</div>
-            <div class="strategy-panel-hint">Tune EMA speed and long-term trend filter.</div>
-            <div class="strategy-divider"></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    strategy_col1, strategy_col2 = st.columns(2)
-    fast_ema = int(strategy_col1.number_input("Fast EMA", min_value=2, max_value=200, value=20, step=1))
-    slow_ema = int(strategy_col2.number_input("Slow EMA", min_value=3, max_value=300, value=50, step=1))
-    require_price_above_ema200 = st.checkbox("Require price > EMA 200", value=True)
     capital = st.number_input("Capital", min_value=1000.0, value=1_000_000.0 if market=="India" else 10_000.0, step=1000.0)
     c1, c2 = st.columns(2)
     commission_pct = c1.number_input("Commission %", min_value=0.0, max_value=2.0, value=0.05, step=0.01)
@@ -789,20 +730,12 @@ if not market or not symbol or not timeframe:
 if not display:
     display = str(symbol).strip().upper()
 
-if slow_ema <= fast_ema:
-    st.error("Slow EMA must be greater than Fast EMA.")
-    st.stop()
-
 
 cfg = build_strategy_config(
     timeframe=timeframe,
     capital=capital,
     commission_pct=float(commission_pct),
     slippage_pct=float(slippage_pct),
-    market=MARKET_LABELS.get(market, "USA"),
-    fast_ema=fast_ema,
-    slow_ema=slow_ema,
-    require_price_above_ema200=require_price_above_ema200,
 )
 try:
     daily = load_history(symbol, period)
@@ -841,10 +774,10 @@ with t1:
     overview = st.columns(4)
     overview[0].metric("Latest Price", "Unavailable" if live is None else f"{live:,.2f}")
     overview[1].metric("Bar Close", f"{signal['close']:,.2f}")
-    overview[2].metric(f"EMA{fast_ema}", f"{signal['ema20']:,.2f}")
-    overview[3].metric(f"EMA{slow_ema}", f"{signal['ema30']:,.2f}")
+    overview[2].metric("EMA20", f"{signal['ema20']:,.2f}")
+    overview[3].metric("EMA30", f"{signal['ema30']:,.2f}")
 
-    st.dataframe(pd.DataFrame({"Condition":[f"Close above EMA{fast_ema}",f"Close above EMA{slow_ema}",f"EMA{fast_ema} above EMA{slow_ema}","Volume above average"],
+    st.dataframe(pd.DataFrame({"Condition":["Close above EMA20","Close above EMA30","EMA20 above EMA30","Volume above average"],
                                "Result":[signal["above_ema20"],signal["above_ema30"],signal["ema_stack"],signal["volume_confirm"]]}), hide_index=True, width="stretch")
     st.caption(f"Signal bar: {signal['bar_date']} | Quote: {quote_time}")
 with t3:
@@ -859,24 +792,6 @@ with t4:
     st.caption("Filter by market, capitalization, and signal strength to find the best setups quickly.")
     scan_market = st.selectbox("Scanner Market", ["India", "US"], key="sm")
     scan_tf = st.radio("Scanner Timeframe", ["Daily", "Weekly", "Monthly", "Quarterly"], horizontal=True)
-    st.markdown(
-        """
-        <div class="strategy-panel">
-            <div class="strategy-panel-title">Strategy</div>
-            <div class="strategy-panel-hint">Use the same setup rules shown in your strategy panel.</div>
-            <div class="strategy-divider"></div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    scan_strategy_col1, scan_strategy_col2 = st.columns(2)
-    scan_fast_ema = int(scan_strategy_col1.number_input("Fast EMA", min_value=2, max_value=200, value=20, step=1, key="scan_fast_ema"))
-    scan_slow_ema = int(scan_strategy_col2.number_input("Slow EMA", min_value=3, max_value=300, value=50, step=1, key="scan_slow_ema"))
-    scan_require_price_above_ema200 = st.checkbox("Require price > EMA 200", value=True, key="scan_require_price_above_ema200")
-
-    if scan_slow_ema <= scan_fast_ema:
-        st.warning("Scanner Slow EMA must be greater than Fast EMA.")
-
     scan_market_cap = st.selectbox("Market Cap", MARKET_CAP_OPTIONS, index=0, help="Mega Cap = $200B+, Large Cap = $10B-$200B, Mid Cap = $2B-$10B")
     signal_options = [
         "BREAKOUT BUY",
@@ -902,9 +817,9 @@ with t4:
         st.warning("Please select at least one signal type to scan.")
     f1, f2, f3, f4 = st.columns(4)
     rv = f1.checkbox("Require volume", value=True)
-    e20 = f2.checkbox(f"Require close > EMA{scan_fast_ema}")
-    e30 = f3.checkbox(f"Require close > EMA{scan_slow_ema}")
-    stack = f4.checkbox(f"Require EMA{scan_fast_ema} > EMA{scan_slow_ema}")
+    e20 = f2.checkbox("Require close > EMA20")
+    e30 = f3.checkbox("Require close > EMA30")
+    stack = f4.checkbox("Require EMA20 > EMA30")
     # Use the same mapping as the sidebar so UI labels ("US") map to CSV values ("USA")
     scan_market_value = MARKET_LABELS.get(scan_market, scan_market)
     sdf = symbols[symbols.market == scan_market_value]
@@ -920,8 +835,6 @@ with t4:
         if st.button("Run Scanner"):
             if not allowed:
                 st.warning("Please select at least one signal type to scan.")
-            elif scan_slow_ema <= scan_fast_ema:
-                st.warning("Scanner Slow EMA must be greater than Fast EMA.")
             else:
                 with st.spinner("Scanning..."):
                     log_runtime_event("scanner_start")
@@ -933,6 +846,8 @@ with t4:
                         scan_slow_ema,
                         scan_require_price_above_ema200,
                     )
+                    failed = result[result["Signal"] == "ERROR"].copy()
+                    st.session_state["scanner_last_failed"] = failed.copy()
                     filtered = result[result.Signal.isin(allowed)].copy()
                     if scan_market_cap != "All":
                         filtered = filtered[filtered["Market Cap Bucket"] == scan_market_cap]
@@ -1003,7 +918,6 @@ with t4:
                 "Trend Score": 0.0,
                 "Volume Ratio": 0.0,
                 "Distance to EMA20 %": 0.0,
-                "Close > EMA200": False,
                 "Close > EMA20": False,
                 "Close > EMA30": False,
                 "EMA20 > EMA30": False,

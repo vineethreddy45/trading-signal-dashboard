@@ -15,9 +15,6 @@ class StrategyConfig:
     commission_pct: float = 0.05
     slippage_pct: float = 0.05
     market: str = "USA"
-    fast_ema: int = 20
-    slow_ema: int = 30
-    require_price_above_ema200: bool = False
 
 
 def build_strategy_config(**kwargs) -> StrategyConfig:
@@ -46,48 +43,39 @@ def convert_timeframe(daily: pd.DataFrame, timeframe: str) -> pd.DataFrame:
 
 def enrich(data: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
     df = data.copy()
-    fast_span = max(2, int(cfg.fast_ema))
-    slow_span = max(fast_span + 1, int(cfg.slow_ema))
-
-    df["EMA_FAST"] = df["Close"].ewm(span=fast_span, adjust=False).mean()
-    df["EMA_SLOW"] = df["Close"].ewm(span=slow_span, adjust=False).mean()
-    # Keep legacy names for downstream consumers and tests.
-    df["EMA20"] = df["EMA_FAST"]
-    df["EMA30"] = df["EMA_SLOW"]
-    df["EMA200"] = df["Close"].ewm(span=200, adjust=False).mean()
+    df["EMA20"] = df["Close"].ewm(span=20, adjust=False).mean()
+    df["EMA30"] = df["Close"].ewm(span=30, adjust=False).mean()
     df["VOL_AVG20"] = df["Volume"].rolling(20).mean()
     df["SUPPORT20"] = df["Low"].rolling(20).min().shift(1)
     df["RESISTANCE20"] = df["High"].rolling(20).max().shift(1)
-    df["ABOVE_EMA20"] = df["Close"] > df["EMA_FAST"]
-    df["ABOVE_EMA30"] = df["Close"] > df["EMA_SLOW"]
-    df["ABOVE_EMA200"] = df["Close"] > df["EMA200"]
-    df["EMA_STACK"] = df["EMA_FAST"] > df["EMA_SLOW"]
-    df["EMA20_RISING"] = df["EMA_FAST"] > df["EMA_FAST"].shift(1)
-    df["EMA30_RISING"] = df["EMA_SLOW"] > df["EMA_SLOW"].shift(1)
+    df["ABOVE_EMA20"] = df["Close"] > df["EMA20"]
+    df["ABOVE_EMA30"] = df["Close"] > df["EMA30"]
+    df["EMA_STACK"] = df["EMA20"] > df["EMA30"]
+    df["EMA20_RISING"] = df["EMA20"] > df["EMA20"].shift(1)
+    df["EMA30_RISING"] = df["EMA30"] > df["EMA30"].shift(1)
     df["VOLUME_CONFIRM"] = df["Volume"] > df["VOL_AVG20"]
     df["PRIOR_HIGH"] = df["High"].shift(1)
     df["STOP"] = df["Low"].rolling(cfg.stop_lookback).min().shift(1)
-    trend_gate = df["ABOVE_EMA200"] if cfg.require_price_above_ema200 else True
     if cfg.market == "USA":
         df["BREAKOUT_BUY"] = (
             (df["ABOVE_EMA20"] | df["ABOVE_EMA30"]) & df["EMA_STACK"] &
             ((df["EMA20_RISING"] & df["EMA30_RISING"]) | df["VOLUME_CONFIRM"]) &
-            (df["Close"] > df["PRIOR_HIGH"]) & trend_gate
+            (df["Close"] > df["PRIOR_HIGH"])
         )
         df["PULLBACK_BUY"] = (
             (df["ABOVE_EMA30"] | df["ABOVE_EMA20"]) & df["EMA_STACK"] &
             (df["Low"] <= df["EMA20"]) & (df["Close"] > df["EMA20"]) &
-            (df["VOLUME_CONFIRM"] | df["EMA20_RISING"]) & trend_gate
+            (df["VOLUME_CONFIRM"] | df["EMA20_RISING"])
         )
     else:
         df["BREAKOUT_BUY"] = (
             df["ABOVE_EMA20"] & df["ABOVE_EMA30"] & df["EMA_STACK"] &
             df["EMA20_RISING"] & df["EMA30_RISING"] & df["VOLUME_CONFIRM"] &
-            (df["Close"] > df["PRIOR_HIGH"]) & trend_gate
+            (df["Close"] > df["PRIOR_HIGH"])
         )
         df["PULLBACK_BUY"] = (
             df["ABOVE_EMA30"] & df["EMA_STACK"] & (df["Low"] <= df["EMA20"]) &
-            (df["Close"] > df["EMA20"]) & df["VOLUME_CONFIRM"] & trend_gate
+            (df["Close"] > df["EMA20"]) & df["VOLUME_CONFIRM"]
         )
 
     candle_range = (df["High"] - df["Low"]).replace(0, np.nan)
@@ -120,7 +108,6 @@ def enrich(data: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
         & lower_wick_pair
         & (df["Close"] >= prev_body_high)
         & df["ABOVE_EMA30"]
-        & trend_gate
     )
     df["DOUBLE_DOJI_RESISTANCE_ALERT"] = (
         df["DOUBLE_DOJI"]
