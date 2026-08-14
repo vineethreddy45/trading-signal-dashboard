@@ -82,7 +82,6 @@ def _build_symbol_lookup(scanner_df: pd.DataFrame, watchlist_df: pd.DataFrame) -
                 continue
             lookup[sym] = {
                 "Signal": str(row.get("Signal") or "Unknown"),
-                "Setup Score": float(pd.to_numeric(row.get("Setup Score"), errors="coerce") or 0.0),
                 "Sector": str(row.get("Sector") or "Unknown"),
                 "Industry": str(row.get("Industry") or "Unknown"),
                 "Market": str(row.get("Market") or "Unknown"),
@@ -104,22 +103,21 @@ def build_assistant_reply(
     if intent == "top_setups":
         if scanner_df.empty:
             return "Intent: top_setups\nSummary: scanner results are empty.\nAction: run scanner first, then ask for top setups."
-        top = scanner_df.sort_values("Setup Score", ascending=False).head(5)
+        top = scanner_df.head(5)
         rows = [
-            f"{r['Quote Symbol']} ({r['Signal']}) score {float(r.get('Setup Score', 0.0)):.1f}"
+            f"{r['Quote Symbol']} ({r['Signal']})"
             for _, r in top.iterrows()
         ]
-        return "Intent: top_setups\nSummary: top scanner setups by score.\nEvidence:\n" + "\n".join(rows)
+        return "Intent: top_setups\nSummary: top scanner setups.\nEvidence:\n" + "\n".join(rows)
 
     if intent == "watchlist_summary":
         if watchlist_df.empty:
             return "Intent: watchlist_summary\nSummary: selected watchlist is empty.\nAction: add symbols from scanner results."
         sector_count = watchlist_df["Sector"].fillna("Unknown").value_counts().head(3)
         sector_text = ", ".join([f"{name} ({count})" for name, count in sector_count.items()])
-        avg_score = pd.to_numeric(watchlist_df.get("Setup Score"), errors="coerce").fillna(0.0).mean()
         return (
             "Intent: watchlist_summary\n"
-            f"Summary: watchlist has {len(watchlist_df)} symbols with average score {avg_score:.1f}.\n"
+            f"Summary: watchlist has {len(watchlist_df)} symbols.\n"
             f"Evidence: top sectors are {sector_text}."
         )
 
@@ -143,7 +141,7 @@ def build_assistant_reply(
         lookup = _build_symbol_lookup(scanner_df, watchlist_df)
         symbols = extract_symbols_from_query(q)
         if len(symbols) < 2 and not scanner_df.empty and "Quote Symbol" in scanner_df.columns:
-            top_two = scanner_df.sort_values("Setup Score", ascending=False)["Quote Symbol"].astype(str).head(2).tolist()
+            top_two = scanner_df["Quote Symbol"].astype(str).head(2).tolist()
             symbols = list(dict.fromkeys(symbols + [s.upper() for s in top_two]))
 
         if len(symbols) < 2:
@@ -159,12 +157,12 @@ def build_assistant_reply(
             )
 
         left, right = lookup[a], lookup[b]
-        better = a if left["Setup Score"] >= right["Setup Score"] else b
+        better = a if left["Signal"] == "BREAKOUT BUY" and right["Signal"] != "BREAKOUT BUY" else b
         return (
             "Intent: symbol_compare\n"
-            f"Summary: {better} currently has stronger setup score.\n"
-            f"Evidence: {a} -> signal={left['Signal']}, score={left['Setup Score']:.1f}, sector={left['Sector']}; "
-            f"{b} -> signal={right['Signal']}, score={right['Setup Score']:.1f}, sector={right['Sector']}."
+            f"Summary: {better} currently looks stronger on signal.\n"
+            f"Evidence: {a} -> signal={left['Signal']}, sector={left['Sector']}; "
+            f"{b} -> signal={right['Signal']}, sector={right['Sector']}."
         )
 
     if intent == "risk_summary":
@@ -503,9 +501,6 @@ def render_scanner_table(rows: pd.DataFrame, selected_market: str) -> None:
             "<th style='text-align:left;padding:8px;'>Market Cap</th>"
             "<th style='text-align:left;padding:8px;'>Cap Tier</th>"
             "<th style='text-align:left;padding:8px;'>Signal</th>"
-            "<th style='text-align:left;padding:8px;'>Setup Score</th>"
-            "<th style='text-align:left;padding:8px;'>Trend</th>"
-            "<th style='text-align:left;padding:8px;'>Vol Ratio</th>"
             "<th style='text-align:left;padding:8px;'>Bar Date</th>"
             "<th style='text-align:left;padding:8px;'>Yahoo</th>"
             "<th style='text-align:left;padding:8px;'>TradingView</th>"
@@ -522,9 +517,6 @@ def render_scanner_table(rows: pd.DataFrame, selected_market: str) -> None:
         market_cap = html_lib.escape(str(row["Market Cap"]))
         cap_tier = html_lib.escape(str(row["Cap Tier"]))
         signal = html_lib.escape(str(row["Signal"]))
-        setup_score = float(row.get("Setup Score", 0.0) or 0.0)
-        trend_score = float(row.get("Trend Score", 0.0) or 0.0)
-        volume_ratio = float(row.get("Volume Ratio", 0.0) or 0.0)
         bar_date = html_lib.escape(str(row["Bar Date"]))
         symbol_link = f"?symbol={quote_plus(ticker)}&market={quote_plus(selected_market)}"
         yahoo_link = html_lib.escape(str(row["Yahoo"]))
@@ -541,9 +533,6 @@ def render_scanner_table(rows: pd.DataFrame, selected_market: str) -> None:
                 f"<td style='padding:8px;'>{market_cap}</td>"
                 f"<td style='padding:8px;'>{cap_tier}</td>"
                 f"<td style='padding:8px;'>{signal}</td>"
-                f"<td style='padding:8px;'>{setup_score:.1f}</td>"
-                f"<td style='padding:8px;'>{trend_score:.0f}/5</td>"
-                f"<td style='padding:8px;'>{volume_ratio:.2f}x</td>"
                 f"<td style='padding:8px;'>{bar_date}</td>"
                 f"<td style='padding:8px;'><a href='{yahoo_link}' target='_blank' rel='noopener noreferrer'>Open</a></td>"
                 f"<td style='padding:8px;'><a href='{tradingview_link}' target='_blank' rel='noopener noreferrer'>Chart</a></td>"
@@ -553,14 +542,6 @@ def render_scanner_table(rows: pd.DataFrame, selected_market: str) -> None:
 
     table.append("</tbody></table>")
     st.markdown("".join(table), unsafe_allow_html=True)
-
-
-def setup_score_band(score: float) -> tuple[str, str]:
-    if score >= 80:
-        return "High", "#22c55e"
-    if score >= 60:
-        return "Medium", "#0ea5e9"
-    return "Low", "#f59e0b"
 
 
 def render_scanner_cards(rows: pd.DataFrame, selected_market: str, limit: int = 12) -> None:
@@ -575,8 +556,6 @@ def render_scanner_cards(rows: pd.DataFrame, selected_market: str, limit: int = 
         ticker = str(row.get("Ticker") or row.get("Quote Symbol") or "").strip()
         company = html_lib.escape(str(row.get("Company Name") or ticker))
         signal = str(row.get("Signal") or "Unknown")
-        score = float(row.get("Setup Score") or 0.0)
-        score_band, score_color = setup_score_band(score)
         sector = html_lib.escape(str(row.get("Sector") or "Unknown"))
         industry = html_lib.escape(str(row.get("Industry") or "Unknown"))
         symbol_link = f"?symbol={quote_plus(ticker)}&market={quote_plus(selected_market)}"
@@ -589,12 +568,11 @@ def render_scanner_cards(rows: pd.DataFrame, selected_market: str, limit: int = 
                     "border-radius:14px;padding:0.85rem;margin-bottom:0.75rem;'>"
                     f"<div style='display:flex;justify-content:space-between;gap:0.5rem;align-items:center;'>"
                     f"<a href='{symbol_link}' target='_self' style='color:#e8edf8;text-decoration:none;font-weight:700;'>{company}</a>"
-                    f"<span style='font-size:0.72rem;padding:3px 8px;border-radius:999px;background:{score_color};color:white;'>{score_band}</span>"
                     "</div>"
                     f"<div style='margin-top:0.35rem;font-size:0.82rem;color:#cbd5e1;'>"
                     f"{html_lib.escape(ticker)} • {html_lib.escape(str(row.get('Market') or 'Unknown'))}</div>"
                     f"<div style='margin-top:0.35rem;'><span class='signal-pill {signal_style.get(signal, 'neutral')}'>{html_lib.escape(signal)}</span></div>"
-                    f"<div style='margin-top:0.5rem;font-size:0.8rem;color:#cbd5e1;'>Score {score:.1f} • Sector: {sector} • Industry: {industry}</div>"
+                    f"<div style='margin-top:0.5rem;font-size:0.8rem;color:#cbd5e1;'>Sector: {sector} • Industry: {industry}</div>"
                     f"<div style='margin-top:0.45rem;font-size:0.78rem;'><a href='{yahoo_link}' target='_blank' rel='noopener noreferrer'"
                     " style='color:#93c5fd;text-decoration:none;'>Open on Yahoo</a></div>"
                     "</div>"
@@ -606,13 +584,10 @@ def render_scanner_cards(rows: pd.DataFrame, selected_market: str, limit: int = 
 def build_signal_explanation(row: pd.Series) -> pd.DataFrame:
     checks = [
         ("Signal", str(row.get("Signal", "Unknown"))),
-        ("Setup Score", f"{float(row.get('Setup Score', 0.0) or 0.0):.1f}"),
         ("Close > EMA20", bool(row.get("Close > EMA20", False))),
         ("Close > EMA30", bool(row.get("Close > EMA30", False))),
         ("EMA20 > EMA30", bool(row.get("EMA20 > EMA30", False))),
         ("Volume Confirm", bool(row.get("Volume Confirm", False))),
-        ("Trend Score", f"{float(row.get('Trend Score', 0.0) or 0.0):.1f}/5"),
-        ("Volume Ratio", f"{float(row.get('Volume Ratio', 0.0) or 0.0):.2f}x"),
         ("Distance to EMA20 %", f"{float(row.get('Distance to EMA20 %', 0.0) or 0.0):.2f}%"),
         ("Sector", str(row.get("Sector", "Unknown"))),
         ("Industry", str(row.get("Industry", "Unknown"))),
@@ -893,8 +868,6 @@ with t4:
             sort_order = st.selectbox(
                 "Sort results by",
                 [
-                    "Setup Score (High to Low)",
-                    "Setup Score (Low to High)",
                     "Market Cap (High to Low)",
                     "Market Cap (Low to High)",
                     "Signal (Best to Worst)",
@@ -921,9 +894,6 @@ with t4:
                 "Cap Tier": "Unknown",
                 "Signal": "UNKNOWN",
                 "Bar Date": "",
-                "Setup Score": 0.0,
-                "Trend Score": 0.0,
-                "Volume Ratio": 0.0,
                 "Distance to EMA20 %": 0.0,
                 "Close > EMA20": False,
                 "Close > EMA30": False,
@@ -952,18 +922,6 @@ with t4:
             display_df["Yahoo"] = "https://finance.yahoo.com/quote/" + display_df["Quote Symbol"]
             display_df["TradingView"] = "https://www.tradingview.com/symbols/" + display_df["Quote Symbol"] + "/"
 
-            display_df["Setup Score"] = pd.to_numeric(
-                display_df.get("Setup Score", pd.Series(index=display_df.index, dtype=float)),
-                errors="coerce",
-            ).fillna(0.0)
-            display_df["Trend Score"] = pd.to_numeric(
-                display_df.get("Trend Score", pd.Series(index=display_df.index, dtype=float)),
-                errors="coerce",
-            ).fillna(0.0)
-            display_df["Volume Ratio"] = pd.to_numeric(
-                display_df.get("Volume Ratio", pd.Series(index=display_df.index, dtype=float)),
-                errors="coerce",
-            ).fillna(0.0)
             display_df["Distance to EMA20 %"] = pd.to_numeric(
                 display_df.get("Distance to EMA20 %", pd.Series(index=display_df.index, dtype=float)),
                 errors="coerce",
@@ -982,11 +940,7 @@ with t4:
             display_df["_signal_rank"] = display_df["Signal"].map(signal_rank).fillna(99)
             display_df["_bar_date"] = pd.to_datetime(display_df["Bar Date"], errors="coerce")
 
-            if sort_order == "Setup Score (High to Low)":
-                display_df = display_df.sort_values(["Setup Score", "_signal_rank", "Market Cap Value"], ascending=[False, True, False], na_position="last")
-            elif sort_order == "Setup Score (Low to High)":
-                display_df = display_df.sort_values(["Setup Score", "_signal_rank", "Market Cap Value"], ascending=[True, True, False], na_position="last")
-            elif sort_order == "Market Cap (High to Low)" and "Market Cap Value" in display_df.columns:
+            if sort_order == "Market Cap (High to Low)" and "Market Cap Value" in display_df.columns:
                 display_df = display_df.sort_values(["Market Cap Value", "_signal_rank"], ascending=[False, True], na_position="last")
             elif sort_order == "Market Cap (Low to High)" and "Market Cap Value" in display_df.columns:
                 display_df = display_df.sort_values(["Market Cap Value", "_signal_rank"], ascending=[True, True], na_position="last")
@@ -1014,9 +968,6 @@ with t4:
                 "Market Cap",
                 "Cap Tier",
                 "Signal",
-                "Setup Score",
-                "Trend Score",
-                "Volume Ratio",
                 "Bar Date",
                 "Yahoo",
                 "TradingView",
@@ -1039,8 +990,6 @@ with t4:
                     display_df["Quote Symbol"].astype(str)
                     + " • "
                     + display_df["Signal"].astype(str)
-                    + " • score "
-                    + display_df["Setup Score"].astype(float).map(lambda x: f"{x:.1f}")
                 ).tolist()
                 explain_pick = st.selectbox("Select symbol", explain_options, key="scanner_signal_explain_pick")
                 explain_row = display_df.iloc[explain_options.index(explain_pick)]
@@ -1116,21 +1065,20 @@ with t5:
     latest_scanner = st.session_state.get("scanner_last_display", pd.DataFrame()).copy()
     if not watch_df.empty and not latest_scanner.empty:
         latest_scanner = latest_scanner.drop_duplicates(subset=["Quote Symbol"], keep="first")
-        refresh_cols = ["Quote Symbol", "Signal", "Setup Score", "Bar Date", "Sector", "Industry", "Market"]
+        refresh_cols = ["Quote Symbol", "Signal", "Bar Date", "Sector", "Industry", "Market"]
         merge_df = latest_scanner[refresh_cols].copy()
         watch_df = watch_df.drop(columns=[c for c in refresh_cols if c != "Quote Symbol" and c in watch_df.columns], errors="ignore")
         watch_df = watch_df.merge(merge_df, on="Quote Symbol", how="left")
         watch_df["Signal"] = watch_df["Signal"].fillna("Unknown")
-        watch_df["Setup Score"] = pd.to_numeric(watch_df["Setup Score"], errors="coerce").fillna(0.0)
 
     if watch_df.empty:
         st.info("This watchlist is empty. Add symbols from the scanner tab.")
     else:
         mcols = st.columns(4)
         mcols[0].metric("Symbols", len(watch_df))
-        mcols[1].metric("Average Score", f"{watch_df['Setup Score'].astype(float).mean():.1f}")
-        mcols[2].metric("Breakout Buy", int((watch_df["Signal"] == "BREAKOUT BUY").sum()))
-        mcols[3].metric("Pullback Buy", int((watch_df["Signal"] == "PULLBACK BUY").sum()))
+        mcols[1].metric("Breakout Buy", int((watch_df["Signal"] == "BREAKOUT BUY").sum()))
+        mcols[2].metric("Pullback Buy", int((watch_df["Signal"] == "PULLBACK BUY").sum()))
+        mcols[3].metric("Watch", int((watch_df["Signal"] == "WATCH").sum()))
 
         watchlist_view = st.radio("Watchlist View", ["Table", "Board"], horizontal=True, key="watchlist_view_mode")
 
@@ -1164,9 +1112,8 @@ with t5:
                 for idx, (label, part) in enumerate(groups):
                     with board_cols[idx % len(board_cols)]:
                         st.markdown(f"**{label}** ({len(part)})")
-                        for _, row in part.sort_values("Setup Score", ascending=False).iterrows():
+                        for _, row in part.iterrows():
                             sym = str(row.get("Quote Symbol") or "")
-                            score = float(pd.to_numeric(row.get("Setup Score"), errors="coerce") or 0.0)
                             sector = str(row.get("Sector") or "Unknown")
                             industry = str(row.get("Industry") or "Unknown")
                             st.markdown(
@@ -1174,7 +1121,7 @@ with t5:
                                     "<div style='background:rgba(15,23,42,0.62);border:1px solid rgba(148,163,184,0.16);"
                                     "border-radius:10px;padding:0.45rem 0.55rem;margin:0.35rem 0;'>"
                                     f"<div style='font-weight:700;color:#e8edf8;'>{html_lib.escape(sym)}</div>"
-                                    f"<div style='font-size:0.78rem;color:#cbd5e1;'>Score {score:.1f} • {html_lib.escape(sector)}</div>"
+                                    f"<div style='font-size:0.78rem;color:#cbd5e1;'>{html_lib.escape(sector)}</div>"
                                     f"<div style='font-size:0.74rem;color:#94a3b8;'>{html_lib.escape(industry)}</div>"
                                     "</div>"
                                 ),

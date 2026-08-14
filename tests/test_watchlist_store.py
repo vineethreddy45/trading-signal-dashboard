@@ -30,9 +30,9 @@ class TestWatchlistStore(unittest.TestCase):
     def test_add_dedup_remove_symbol(self):
         watchlists = {"Default": []}
         rows = [
-            {"Quote Symbol": "AAPL", "Market": "USA", "Signal": "WATCH", "Setup Score": 44.0},
-            {"Quote Symbol": "AAPL", "Market": "USA", "Signal": "WATCH", "Setup Score": 45.0},
-            {"Quote Symbol": "MSFT", "Market": "USA", "Signal": "BREAKOUT BUY", "Setup Score": 61.0},
+            {"Quote Symbol": "AAPL", "Market": "USA", "Signal": "WATCH"},
+            {"Quote Symbol": "AAPL", "Market": "USA", "Signal": "WATCH"},
+            {"Quote Symbol": "MSFT", "Market": "USA", "Signal": "BREAKOUT BUY"},
         ]
 
         added = add_symbols_to_watchlist(watchlists, "Default", rows)

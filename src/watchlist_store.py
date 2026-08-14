@@ -82,7 +82,6 @@ def _row_to_entry(row: dict) -> dict:
         "Sector": str(row.get("Sector") or "Unknown").strip() or "Unknown",
         "Industry": str(row.get("Industry") or "Unknown").strip() or "Unknown",
         "Signal": str(row.get("Signal") or "Unknown").strip() or "Unknown",
-        "Setup Score": float(row.get("Setup Score") or 0.0),
         "Bar Date": str(row.get("Bar Date") or "").strip(),
         "Added At": _now_iso(),
     }

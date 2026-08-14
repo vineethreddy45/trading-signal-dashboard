@@ -52,37 +52,13 @@ def format_market_cap(value: float | int | None) -> str:
     return f"{value:,.0f}"
 
 
-def setup_score_components(row: pd.Series, signal_name: str) -> tuple[float, float, float, float]:
-    signal_bonus = {
-        "BREAKOUT BUY": 40.0,
-        "PULLBACK BUY": 32.0,
-        "DOUBLE DOJI SUPPORT BUY": 30.0,
-        "DOUBLE DOJI RESISTANCE ALERT": 8.0,
-        "WATCH": 20.0,
-        "NEUTRAL": 10.0,
-        "AVOID": 0.0,
-        "ERROR": 0.0,
-    }.get(signal_name, 0.0)
-
-    trend_score = (
-        int(bool(row.get("ABOVE_EMA20", False)))
-        + int(bool(row.get("ABOVE_EMA30", False)))
-        + int(bool(row.get("EMA_STACK", False)))
-        + int(bool(row.get("EMA20_RISING", False)))
-        + int(bool(row.get("EMA30_RISING", False)))
-    )
-
-    vol_avg = float(row.get("VOL_AVG20", 0.0) or 0.0)
-    volume = float(row.get("Volume", 0.0) or 0.0)
-    volume_ratio = (volume / vol_avg) if vol_avg > 0 else 0.0
+def signal_distance_components(row: pd.Series, signal_name: str) -> float:
+    _ = signal_name
 
     close = float(row.get("Close", 0.0) or 0.0)
     ema20 = float(row.get("EMA20", 0.0) or 0.0)
     dist_ema20_pct = ((close - ema20) / ema20 * 100.0) if ema20 > 0 else 0.0
-
-    score = signal_bonus + trend_score * 8.0 + min(max(volume_ratio, 0.0), 2.5) * 8.0 - min(abs(dist_ema20_pct), 12.0)
-    score = float(max(0.0, min(100.0, score)))
-    return score, float(trend_score), float(volume_ratio), float(dist_ema20_pct)
+    return float(dist_ema20_pct)
 
 
 def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = None) -> pd.DataFrame:
@@ -103,7 +79,7 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
             enriched_bars = enrich(bars, cfg)
             signal = latest_signal(bars, cfg)
             row = enriched_bars.iloc[-1]
-            score, trend_score, volume_ratio, dist_ema20_pct = setup_score_components(row, signal["signal"])
+            dist_ema20_pct = signal_distance_components(row, signal["signal"])
             market_cap, sector, industry = get_ticker_profile(quote_symbol)
             bucket = market_cap_bucket(market_cap)
             rows.append({
@@ -125,9 +101,6 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
                 "Close > EMA30": signal["above_ema30"],
                 "EMA20 > EMA30": signal["ema_stack"],
                 "Bar Date": signal["bar_date"],
-                "Setup Score": score,
-                "Trend Score": trend_score,
-                "Volume Ratio": volume_ratio,
                 "Distance to EMA20 %": dist_ema20_pct,
             })
         except Exception as exc:
@@ -150,9 +123,6 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
                 "Close > EMA30": False,
                 "EMA20 > EMA30": False,
                 "Bar Date": None,
-                "Setup Score": 0.0,
-                "Trend Score": 0.0,
-                "Volume Ratio": 0.0,
                 "Distance to EMA20 %": 0.0,
             })
     result = pd.DataFrame(rows)
@@ -167,5 +137,5 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
         "ERROR": 9,
     }
     result["_rank"] = result["Signal"].map(order).fillna(99)
-    result = result.sort_values(["Setup Score", "_rank", "Market", "Symbol"], ascending=[False, True, True, True])
+    result = result.sort_values(["_rank", "Market", "Symbol"], ascending=[True, True, True])
     return result.drop(columns="_rank")
