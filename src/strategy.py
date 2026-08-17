@@ -45,7 +45,7 @@ def enrich(data: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
     df["EMA_STACK"] = df["EMA20"] > df["EMA30"]
     df["EMA20_RISING"] = df["EMA20"] > df["EMA20"].shift(1)
     df["EMA30_RISING"] = df["EMA30"] > df["EMA30"].shift(1)
-    df["VOLUME_CONFIRM"] = False
+    df["VOLUME_CONFIRM"] = df["Volume"] > df["VOL_AVG20"]
     df["PRIOR_HIGH"] = df["High"].shift(1)
     df["STOP"] = df["Low"].rolling(cfg.stop_lookback).min().shift(1)
     if cfg.market == "USA":
@@ -133,30 +133,15 @@ def enrich(data: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
     return df
 
 
-def latest_signal_row(data: pd.DataFrame) -> pd.Series:
-    if data.empty:
-        raise ValueError("No data available to resolve the latest signal.")
-
-    valid = data[data[["EMA20", "EMA30"]].notna().all(axis=1)].copy()
-    if valid.empty:
-        valid = data.copy()
-
-    ordered = valid.sort_index()
-    latest_idx = ordered.index.max()
-    latest = ordered.loc[[latest_idx]]
-    return latest.iloc[0]
-
-
 def latest_signal(data: pd.DataFrame, cfg: StrategyConfig) -> dict:
     df = enrich(data, cfg)
-    row = latest_signal_row(df)
-    signal_name = str(row["SIGNAL"])
+    row = df.iloc[-1]
     bar_date = row.name.date() if hasattr(row.name, "date") else pd.Timestamp(row.name).date()
 
     return {
-        "signal": signal_name, "close": float(row["Close"]),
+        "signal": str(row["SIGNAL"]), "close": float(row["Close"]),
         "ema20": float(row["EMA20"]), "ema30": float(row["EMA30"]),
-        "volume_confirm": False,
+        "volume_confirm": bool(row["VOLUME_CONFIRM"]),
         "above_ema20": bool(row["ABOVE_EMA20"]),
         "above_ema30": bool(row["ABOVE_EMA30"]),
         "ema_stack": bool(row["EMA_STACK"]),

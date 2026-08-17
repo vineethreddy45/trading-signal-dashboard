@@ -463,6 +463,7 @@ def quote_symbol_for_row(row: pd.Series) -> str:
     return symbol
 
 
+@st.cache_data(ttl=900, show_spinner=False)
 def run_scanner_cached(symbols_df: pd.DataFrame, timeframe: str, count: int) -> pd.DataFrame:
     return scan_symbols(symbols_df, timeframe, count)
 
