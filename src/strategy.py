@@ -45,7 +45,7 @@ def enrich(data: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
     df["EMA_STACK"] = df["EMA20"] > df["EMA30"]
     df["EMA20_RISING"] = df["EMA20"] > df["EMA20"].shift(1)
     df["EMA30_RISING"] = df["EMA30"] > df["EMA30"].shift(1)
-    df["VOLUME_CONFIRM"] = df["Volume"] > df["VOL_AVG20"]
+    df["VOLUME_CONFIRM"] = False
     df["PRIOR_HIGH"] = df["High"].shift(1)
     df["STOP"] = df["Low"].rolling(cfg.stop_lookback).min().shift(1)
     if cfg.market == "USA":
@@ -153,17 +153,10 @@ def latest_signal(data: pd.DataFrame, cfg: StrategyConfig) -> dict:
     signal_name = str(row["SIGNAL"])
     bar_date = row.name.date() if hasattr(row.name, "date") else pd.Timestamp(row.name).date()
 
-    volume_confirm = bool(row["VOLUME_CONFIRM"]) if signal_name in {
-        "BREAKOUT BUY",
-        "PULLBACK BUY",
-        "DOUBLE DOJI SUPPORT BUY",
-        "DOUBLE DOJI RESISTANCE ALERT",
-    } else False
-
     return {
         "signal": signal_name, "close": float(row["Close"]),
         "ema20": float(row["EMA20"]), "ema30": float(row["EMA30"]),
-        "volume_confirm": volume_confirm,
+        "volume_confirm": False,
         "above_ema20": bool(row["ABOVE_EMA20"]),
         "above_ema30": bool(row["ABOVE_EMA30"]),
         "ema_stack": bool(row["EMA_STACK"]),

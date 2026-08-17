@@ -97,12 +97,7 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
                 "Close": signal["close"],
                 "EMA20": signal["ema20"],
                 "EMA30": signal["ema30"],
-                "Volume Confirm": signal["volume_confirm"] if signal_name in {
-                    "BREAKOUT BUY",
-                    "PULLBACK BUY",
-                    "DOUBLE DOJI SUPPORT BUY",
-                    "DOUBLE DOJI RESISTANCE ALERT",
-                } else False,
+                "Volume Confirm": False,
                 "Close > EMA20": signal["above_ema20"],
                 "Close > EMA30": signal["above_ema30"],
                 "EMA20 > EMA30": signal["ema_stack"],

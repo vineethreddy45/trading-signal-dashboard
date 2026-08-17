@@ -65,7 +65,7 @@ def test_latest_signal_row_ignores_dates_without_valid_ema_values():
     assert str(row.name.date()) == "2024-01-04"
 
 
-def test_latest_signal_removes_volume_confirm_for_non_bullish_states():
+def test_latest_signal_removes_volume_confirm_for_all_signal_states():
     df = pd.DataFrame(
         {
             "Open": [100, 105],
@@ -79,9 +79,10 @@ def test_latest_signal_removes_volume_confirm_for_non_bullish_states():
             "ABOVE_EMA20": [False, True],
             "ABOVE_EMA30": [False, True],
             "EMA_STACK": [False, True],
-            "SIGNAL": ["WATCH", "NEUTRAL"],
+            "SIGNAL": ["WATCH", "BREAKOUT BUY"],
         },
         index=pd.to_datetime(["2024-01-01", "2024-01-02"]),
     )
 
-    assert latest_signal(df, StrategyConfig(timeframe="Daily", market="USA"))["volume_confirm"] is False
+    signal = latest_signal(df, StrategyConfig(timeframe="Daily", market="USA"))
+    assert signal["volume_confirm"] is False
