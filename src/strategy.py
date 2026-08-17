@@ -51,23 +51,23 @@ def enrich(data: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
     if cfg.market == "USA":
         df["BREAKOUT_BUY"] = (
             (df["ABOVE_EMA20"] | df["ABOVE_EMA30"]) & df["EMA_STACK"] &
-            ((df["EMA20_RISING"] & df["EMA30_RISING"]) | df["VOLUME_CONFIRM"]) &
+            (df["EMA20_RISING"] & df["EMA30_RISING"]) &
             (df["Close"] > df["PRIOR_HIGH"])
         )
         df["PULLBACK_BUY"] = (
             (df["ABOVE_EMA30"] | df["ABOVE_EMA20"]) & df["EMA_STACK"] &
             (df["Low"] <= df["EMA20"]) & (df["Close"] > df["EMA20"]) &
-            (df["VOLUME_CONFIRM"] | df["EMA20_RISING"])
+            df["EMA20_RISING"]
         )
     else:
         df["BREAKOUT_BUY"] = (
             df["ABOVE_EMA20"] & df["ABOVE_EMA30"] & df["EMA_STACK"] &
-            df["EMA20_RISING"] & df["EMA30_RISING"] & df["VOLUME_CONFIRM"] &
+            df["EMA20_RISING"] & df["EMA30_RISING"] &
             (df["Close"] > df["PRIOR_HIGH"])
         )
         df["PULLBACK_BUY"] = (
             df["ABOVE_EMA30"] & df["EMA_STACK"] & (df["Low"] <= df["EMA20"]) &
-            (df["Close"] > df["EMA20"]) & df["VOLUME_CONFIRM"]
+            (df["Close"] > df["EMA20"]) & df["EMA20_RISING"]
         )
 
     candle_range = (df["High"] - df["Low"]).replace(0, np.nan)
@@ -110,20 +110,20 @@ def enrich(data: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
 
     score = (df["ABOVE_EMA20"].astype(int) + df["ABOVE_EMA30"].astype(int) +
              df["EMA_STACK"].astype(int) + df["EMA20_RISING"].astype(int) +
-             df["EMA30_RISING"].astype(int) + df["VOLUME_CONFIRM"].astype(int))
+             df["EMA30_RISING"].astype(int))
     df["SIGNAL"] = np.select(
         [
             df["BREAKOUT_BUY"],
-            df["PULLBACK_BUY"],
             df["DOUBLE_DOJI_SUPPORT_BUY"],
+            df["PULLBACK_BUY"],
             df["DOUBLE_DOJI_RESISTANCE_ALERT"],
             score >= 5,
             score >= 3,
         ],
         [
             "BREAKOUT BUY",
-            "PULLBACK BUY",
             "DOUBLE DOJI SUPPORT BUY",
+            "PULLBACK BUY",
             "DOUBLE DOJI RESISTANCE ALERT",
             "WATCH",
             "NEUTRAL",

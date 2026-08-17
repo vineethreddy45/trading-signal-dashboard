@@ -793,10 +793,10 @@ with t4:
     if not allowed:
         st.warning("Please select at least one signal type to scan.")
     f1, f2, f3, f4 = st.columns(4)
-    rv = f1.checkbox("Require volume", value=False, key="scanner_require_volume_v2")
-    e20 = f2.checkbox("Require close > EMA20", key="scanner_require_close_ema20_v2")
-    e30 = f3.checkbox("Require close > EMA30", key="scanner_require_close_ema30_v2")
-    stack = f4.checkbox("Require EMA20 > EMA30", key="scanner_require_ema_stack_v2")
+    e20 = f1.checkbox("Require close > EMA20", key="scanner_require_close_ema20_v2")
+    e30 = f2.checkbox("Require close > EMA30", key="scanner_require_close_ema30_v2")
+    stack = f3.checkbox("Require EMA20 > EMA30", key="scanner_require_ema_stack_v2")
+    f4.empty()
     show_everything = st.checkbox(
         "Show everything (ignore all signal filters)",
         value=True,
@@ -832,8 +832,6 @@ with t4:
                         filtered = result[result.Signal.isin(allowed)].copy()
                         if scan_market_cap != "All":
                             filtered = filtered[filtered["Market Cap Bucket"] == scan_market_cap]
-                        if rv:
-                            filtered = filtered[filtered["Volume Confirm"] == True]
                         if e20:
                             filtered = filtered[filtered["Close > EMA20"] == True]
                         if e30:
