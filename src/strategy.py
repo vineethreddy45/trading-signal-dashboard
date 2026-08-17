@@ -136,15 +136,7 @@ def enrich(data: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
 def latest_signal(data: pd.DataFrame, cfg: StrategyConfig) -> dict:
     df = enrich(data, cfg)
     row = df.iloc[-1]
-    above = df["ABOVE_EMA20"].eq(True)
-    above_prev = above.shift(1, fill_value=False)
-
-    if row["ABOVE_EMA20"]:
-        cross = df.loc[above & ~above_prev]
-        bar_date = cross.index[-1].date() if not cross.empty else row.name.date()
-    else:
-        above_ema20 = df.loc[above]
-        bar_date = above_ema20.index[-1].date() if not above_ema20.empty else row.name.date()
+    bar_date = row.name.date() if hasattr(row.name, "date") else pd.Timestamp(row.name).date()
 
     return {
         "signal": str(row["SIGNAL"]), "close": float(row["Close"]),
