@@ -7,7 +7,7 @@ import pandas as pd
 import yfinance as yf
 
 from src.market_data import download_history
-from src.strategy import StrategyConfig, convert_timeframe, enrich, latest_signal
+from src.strategy import StrategyConfig, convert_timeframe, enrich, latest_signal, latest_signal_row
 
 
 MARKET_CAP_BUCKETS = {
@@ -78,10 +78,11 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
             bars = convert_timeframe(daily, timeframe)
             enriched_bars = enrich(bars, cfg)
             signal = latest_signal(bars, cfg)
-            row = enriched_bars.iloc[-1]
+            row = latest_signal_row(enriched_bars)
             dist_ema20_pct = signal_distance_components(row, signal["signal"])
             market_cap, sector, industry = get_ticker_profile(quote_symbol)
             bucket = market_cap_bucket(market_cap)
+            signal_name = signal["signal"]
             rows.append({
                 "Symbol": display_symbol,
                 "Quote Symbol": quote_symbol,
@@ -91,12 +92,17 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
                 "Market Cap": format_market_cap(market_cap),
                 "Market Cap Value": market_cap,
                 "Market Cap Bucket": bucket,
-                "Signal": signal["signal"],
+                "Signal": signal_name,
                 "Error": "",
                 "Close": signal["close"],
                 "EMA20": signal["ema20"],
                 "EMA30": signal["ema30"],
-                "Volume Confirm": signal["volume_confirm"],
+                "Volume Confirm": signal["volume_confirm"] if signal_name in {
+                    "BREAKOUT BUY",
+                    "PULLBACK BUY",
+                    "DOUBLE DOJI SUPPORT BUY",
+                    "DOUBLE DOJI RESISTANCE ALERT",
+                } else False,
                 "Close > EMA20": signal["above_ema20"],
                 "Close > EMA30": signal["above_ema30"],
                 "EMA20 > EMA30": signal["ema_stack"],

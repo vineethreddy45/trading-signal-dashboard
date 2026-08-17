@@ -133,15 +133,37 @@ def enrich(data: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
     return df
 
 
+def latest_signal_row(data: pd.DataFrame) -> pd.Series:
+    if data.empty:
+        raise ValueError("No data available to resolve the latest signal.")
+
+    valid = data[data[["EMA20", "EMA30"]].notna().all(axis=1)].copy()
+    if valid.empty:
+        valid = data.copy()
+
+    ordered = valid.sort_index()
+    latest_idx = ordered.index.max()
+    latest = ordered.loc[[latest_idx]]
+    return latest.iloc[0]
+
+
 def latest_signal(data: pd.DataFrame, cfg: StrategyConfig) -> dict:
     df = enrich(data, cfg)
-    row = df.iloc[-1]
+    row = latest_signal_row(df)
+    signal_name = str(row["SIGNAL"])
     bar_date = row.name.date() if hasattr(row.name, "date") else pd.Timestamp(row.name).date()
 
+    volume_confirm = bool(row["VOLUME_CONFIRM"]) if signal_name in {
+        "BREAKOUT BUY",
+        "PULLBACK BUY",
+        "DOUBLE DOJI SUPPORT BUY",
+        "DOUBLE DOJI RESISTANCE ALERT",
+    } else False
+
     return {
-        "signal": str(row["SIGNAL"]), "close": float(row["Close"]),
+        "signal": signal_name, "close": float(row["Close"]),
         "ema20": float(row["EMA20"]), "ema30": float(row["EMA30"]),
-        "volume_confirm": bool(row["VOLUME_CONFIRM"]),
+        "volume_confirm": volume_confirm,
         "above_ema20": bool(row["ABOVE_EMA20"]),
         "above_ema30": bool(row["ABOVE_EMA30"]),
         "ema_stack": bool(row["EMA_STACK"]),
