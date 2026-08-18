@@ -61,6 +61,18 @@ def signal_distance_components(row: pd.Series, signal_name: str) -> float:
     return float(dist_ema20_pct)
 
 
+def _is_invalid_yahoo_symbol_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return (
+        "no data returned" in message
+        or "no data found" in message
+        or "possibly delisted" in message
+        or "missing columns" in message
+        or "quote not found" in message
+        or "not found" in message and "symbol" in message
+    )
+
+
 def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = None) -> pd.DataFrame:
     rows, source = [], symbols_df.head(limit) if limit else symbols_df
     for item in source.itertuples(index=False):
@@ -105,6 +117,8 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
                 "Distance to EMA20 %": dist_ema20_pct,
             })
         except Exception as exc:
+            if _is_invalid_yahoo_symbol_error(exc):
+                continue
             rows.append({
                 "Symbol": str(item.display_symbol).strip().upper(),
                 "Quote Symbol": str(item.symbol).strip().upper(),
@@ -114,8 +128,8 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
                 "Market Cap": "N/A",
                 "Market Cap Value": None,
                 "Market Cap Bucket": "Unknown",
-                "Signal": "AVOID",
-                "Error": str(exc),
+                "Signal": "NO DATA",
+                "Error": f"No data found: {exc}",
                 "Close": None,
                 "EMA20": None,
                 "EMA30": None,
@@ -127,6 +141,9 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
                 "Distance to EMA20 %": 0.0,
             })
     result = pd.DataFrame(rows)
+    if result.empty:
+        return result
+
     order = {
         "BREAKOUT BUY": 1,
         "PULLBACK BUY": 2,
@@ -135,6 +152,7 @@ def scan_symbols(symbols_df: pd.DataFrame, timeframe: str, limit: int | None = N
         "NEUTRAL": 5,
         "DOUBLE DOJI RESISTANCE ALERT": 6,
         "AVOID": 7,
+        "NO DATA": 8,
         "ERROR": 9,
     }
     result["_rank"] = result["Signal"].map(order).fillna(99)
