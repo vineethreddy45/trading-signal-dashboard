@@ -815,7 +815,14 @@ with t4:
         effective_count = max_count if show_everything else count
         if "scanner_last_result" not in st.session_state:
             st.session_state["scanner_last_result"] = pd.DataFrame()
-        if st.button("Run Scanner"):
+
+        should_run_scanner = st.button("Run Scanner") or (
+            st.session_state.get("scanner_last_result", pd.DataFrame()).empty
+            and bool(scan_market)
+            and bool(scan_tf)
+        )
+
+        if should_run_scanner:
             if not allowed and not show_everything:
                 st.warning("Please select at least one signal type to scan.")
             else:
