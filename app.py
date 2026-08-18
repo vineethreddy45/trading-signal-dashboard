@@ -379,6 +379,7 @@ signal_style = {
     "WATCH": "watch",
     "NEUTRAL": "neutral",
     "AVOID": "avoid",
+    "NO DATA": "neutral",
     "ERROR": "error",
 }
 MARKET_CAP_OPTIONS = ["All", "Mega Cap", "Large Cap", "Mid Cap"]
@@ -933,6 +934,7 @@ with t4:
                 "NEUTRAL": 5,
                 "DOUBLE DOJI RESISTANCE ALERT": 6,
                 "AVOID": 7,
+                "NO DATA": 8,
                 "ERROR": 9,
             }
             display_df["_signal_rank"] = display_df["Signal"].map(signal_rank).fillna(99)
@@ -1089,6 +1091,7 @@ with t5:
                 "NEUTRAL",
                 "DOUBLE DOJI RESISTANCE ALERT",
                 "AVOID",
+                "NO DATA",
                 "Unknown",
             ]
             groups: list[tuple[str, pd.DataFrame]] = []
